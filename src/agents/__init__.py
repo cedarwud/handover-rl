@@ -1,11 +1,18 @@
 """
-RL Agents - Concrete Algorithm Implementations
+RL Agents - Modular Framework for Satellite Handover
 
-This module provides concrete implementations of RL algorithms for
-satellite handover optimization.
+This module provides the base agent interface and concrete implementations
+of RL algorithms for satellite handover optimization.
 
-Available Agents:
-    DQNAgent: Deep Q-Network with experience replay and target network
+Architecture:
+    Phase 1 (Refactoring): BaseAgent interface + DQN refactored
+    Phase 2 (Baselines): Rule-based comparison methods
+
+Base Classes:
+    BaseAgent: Abstract interface for all RL agents
+
+Agents (will be added during refactoring):
+    DQNAgent: Deep Q-Network (to be refactored in Task 1.3)
 
 Network Architectures:
     DQNNetwork: Standard DQN architecture
@@ -15,31 +22,34 @@ Utilities:
     ReplayBuffer: Standard experience replay buffer
     PrioritizedReplayBuffer: Prioritized experience replay (optional)
 
-Usage:
-    from src.agents import DQNAgent
+Usage (after refactoring):
+    from src.agents import BaseAgent, DQNAgent
 
-    config = {
-        'learning_rate': 1e-4,
-        'gamma': 0.99,
-        'epsilon_start': 1.0,
-        'use_double_dqn': True
-    }
-
-    agent = DQNAgent(state_dim=12, action_dim=2, config=config)
-    action = agent.select_action(state)
-    loss = agent.update()
+    agent = DQNAgent(obs_space, action_space, config)
+    action = agent.select_action(state, deterministic=False)
+    loss = agent.update(batch)
 """
 
-from .dqn_agent import DQNAgent
+# Base interface
+from .base_agent import BaseAgent
+
+# Utilities (existing)
 from .dqn_network import DQNNetwork, DuelingDQNNetwork
 from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
 
+# Agents (refactored)
+from .dqn import DQNAgent
+
 __all__ = [
+    # Base
+    'BaseAgent',
+    # Agents
     'DQNAgent',
+    # Utilities
     'DQNNetwork',
     'DuelingDQNNetwork',
     'ReplayBuffer',
-    'PrioritizedReplayBuffer'
+    'PrioritizedReplayBuffer',
 ]
 
-__version__ = "2.0.0"
+__version__ = "2.0.0-refactor"
