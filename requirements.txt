@@ -1,0 +1,75 @@
+# ========================================
+# Handover-RL Complete Dependencies
+# ========================================
+# Single unified requirements file for all dependencies
+#
+# Python Version: 3.10+
+# Last Updated: 2025-10-19
+#
+# Quick Setup:
+#   python3 -m venv venv
+#   source venv/bin/activate
+#   pip install -r requirements.txt
+#
+# Or use setup script:
+#   ./setup_env.sh
+
+# ============================================================================
+# Core Scientific Computing (from orbit-engine)
+# ============================================================================
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
+astropy>=5.2.0
+skyfield>=1.45
+sgp4>=2.21
+itur>=0.4.0
+h5py>=3.8.0
+PyYAML>=6.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+httpx>=0.24.0
+python-dateutil>=2.8.0
+pytz>=2023.3
+psutil>=5.9.0
+tqdm>=4.65.0
+
+# ============================================================================
+# Deep Learning & RL (PyTorch ecosystem)
+# ============================================================================
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# ============================================================================
+# Reinforcement Learning
+# ============================================================================
+# IMPORTANT: We use Gymnasium (NOT gym)
+#   - gym (OpenAI):       Deprecated since 2022, last version 0.26.2
+#   - gymnasium (Farama): Actively maintained, successor to gym
+#   - Migration guide: https://gymnasium.farama.org/content/migration-guide/
+gymnasium>=1.0.0        # Modern RL environment API (we use 1.2.1)
+
+# NOTE: gym (OpenAI) is REMOVED - we only use gymnasium
+# If you need gym compatibility for legacy code, use gymnasium's compatibility mode:
+#   import gymnasium as gym  # Drop-in replacement
+
+# ============================================================================
+# Visualization & Logging
+# ============================================================================
+matplotlib>=3.7.0
+tensorboard>=2.13.0
+pillow>=10.0.0
+
+# ============================================================================
+# Testing (pytest for environment validation)
+# ============================================================================
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+
+# ============================================================================
+# Utilities
+# ============================================================================
+numpy-financial>=1.0.0

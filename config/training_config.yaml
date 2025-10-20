@@ -1,0 +1,156 @@
+# Training Configuration
+# ⚠️ Note: Many parameters are ASSUMPTIONS and need experimental tuning
+
+training:
+  # Training Scale
+  epochs: 4  # Train multiple epochs over the dataset
+  max_episodes: null  # null = use all available, or specify a number
+
+  # Hardware
+  device: "cuda"  # or "cpu"
+  num_workers: 4  # DataLoader workers
+  pin_memory: true  # Speed up GPU transfer
+
+  # Checkpointing
+  checkpoint:
+    save_frequency: 500  # Save every N episodes
+    save_best: true      # Save best model based on metric
+    metric: "avg_reward"  # "avg_reward" or "avg_loss"
+    keep_last_n: 10      # Keep last N checkpoints
+
+  # Validation
+  validation:
+    frequency: 100  # Validate every N episodes
+    episodes: 1000   # Number of validation episodes
+
+  # Logging
+  logging:
+    tensorboard: true
+    tensorboard_dir: "logs/tensorboard"
+    wandb: false  # Set to true to enable WandB
+    wandb_project: "handover-rl-v2"
+    log_frequency: 10  # Log every N episodes
+
+# DQN Configuration
+# 🎲 ASSUMPTIONS: Using standard DQN defaults, not tuned for this problem
+dqn:
+  # Network Architecture
+  # 🎲 ASSUMPTION - needs experimental validation
+  network:
+    hidden_layers: [128, 128, 64]
+    activation: "relu"
+    dropout: 0.1
+    use_dueling: false  # Dueling DQN architecture
+    use_noisy: false    # Noisy Networks for exploration
+
+  # Hyperparameters
+  # 🎲 ASSUMPTIONS from original DQN paper (Mnih et al., 2015)
+  batch_size: 64
+  gamma: 0.99  # Discount factor
+  learning_rate: 0.0001
+  optimizer: "adam"
+
+  # Exploration
+  # 🎲 ASSUMPTIONS - standard ε-greedy schedule
+  epsilon_start: 1.0
+  epsilon_end: 0.01
+  epsilon_decay: 0.995  # Multiplicative decay per episode
+
+  # Experience Replay
+  replay_buffer:
+    capacity: 100000  # Max transitions to store
+    min_samples_before_training: 10000  # Start training after this many samples
+    prioritized: false  # Use Prioritized Experience Replay (PER)
+
+  # Target Network
+  target_network:
+    update_frequency: 100  # Update target network every N episodes
+    soft_update: false     # Use soft update (Polyak averaging)
+    tau: 0.001             # Soft update coefficient (if enabled)
+
+  # Loss Function
+  loss:
+    type: "smooth_l1"  # "mse" or "smooth_l1" (Huber loss)
+    clip_grad: 10.0    # Gradient clipping
+
+# Environment Configuration
+environment:
+  # State Space
+  state_dim: 12  # Number of features
+
+  # Action Space
+  action_dim: 2  # 0: keep current satellite, 1: handover to best neighbor
+
+  # Reward Function
+  # 🎲 ASSUMPTIONS: These weights are COMPLETELY ASSUMED and need tuning!
+  # ⚠️ Critical: Reward design significantly impacts training
+  reward_weights:
+    qos_improvement: 1.0      # Reward for QoS improvement
+    handover_penalty: -0.5    # Penalty for making a handover
+    signal_quality: 0.3       # Reward for good signal quality
+    ping_pong_penalty: -1.0   # Heavy penalty for ping-pong handovers
+
+  # Ping-Pong Detection
+  # 🎲 ASSUMPTION - needs validation
+  ping_pong_detection:
+    time_window_seconds: 60  # Check for ping-pong within this window
+    threshold_count: 2        # Ping-pong if >N handovers to same satellite
+
+  # Episode Settings
+  max_steps_per_episode: 1500  # Maximum steps (handles both SL & OW)
+  early_termination:
+    enabled: false  # Terminate early if signal lost
+    min_rsrp_dbm: -120  # Minimum RSRP to continue
+
+# Data Loading
+data_loader:
+  batch_size: 64
+  shuffle: true
+  drop_last: false
+
+  # Data augmentation (if any)
+  augmentation:
+    enabled: false
+
+# Baseline Comparison
+# These baseline strategies will be evaluated for comparison
+baselines:
+  - name: "rsrp_based"
+    description: "Always handover to strongest RSRP"
+
+  - name: "a3_event"
+    description: "3GPP A3-event triggered handover"
+    params:
+      hysteresis_db: 3.0
+      time_to_trigger_ms: 100
+
+  - name: "always_handover"
+    description: "Always handover to best neighbor"
+
+  - name: "never_handover"
+    description: "Never handover, stay on current satellite"
+
+# Evaluation Metrics
+metrics:
+  - avg_cumulative_reward
+  - avg_episode_reward
+  - handover_rate  # Handovers per minute
+  - ping_pong_rate  # Percentage of ping-pong handovers
+  - avg_rsrp_dbm
+  - avg_rsrq_db
+  - avg_sinr_db
+  - signal_drop_rate
+
+# ⚠️ TIME ESTIMATES (Need Validation)
+estimates:
+  training_time_1day_hours: 1.0  # ⚠️ ESTIMATE
+  training_time_7day_hours: 6.0  # ⚠️ ESTIMATE
+  training_time_30day_hours: 42.4  # ⚠️ ESTIMATE
+
+  # Breakdown (for 30 days, 13,250 episodes × 4 epochs)
+  episode_execution_hours: 33.6  # ⚠️ ESTIMATE
+  network_updates_hours: 7.4     # ⚠️ ESTIMATE
+  validation_hours: 1.0          # ⚠️ ESTIMATE
+
+# Seed for Reproducibility
+seed: 42

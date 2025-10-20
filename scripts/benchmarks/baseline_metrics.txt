@@ -1,0 +1,8 @@
+Phase 0 Baseline Metrics
+============================================================
+Date: 2025-10-19T01:33:36.053275
+
+Single Satellite Query:  0.19 ms
+10-Satellite Query:      0.001 s
+30-Satellite Query:      0.002 s
+125-Satellite Projected: 0.008 s
