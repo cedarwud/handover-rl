@@ -100,3 +100,4 @@ docs/.doctrees/
 .env.*.local
 
 # Note: .env is tracked for default configuration template
+.env

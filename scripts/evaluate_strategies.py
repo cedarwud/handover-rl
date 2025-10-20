@@ -102,7 +102,26 @@ def evaluate_strategy(
         logger = logging.getLogger(__name__)
 
     if start_time_base is None:
-        start_time_base = datetime(2025, 7, 27, 0, 0, 0)
+        # Use latest TLE epoch time (2025-10-18) for maximum accuracy
+        # TLE epoch day 291.95 = 2025-10-18 22:54:52
+        # Using 2025-10-18 00:00:00 as base time
+        start_time_base = datetime(2025, 10, 18, 0, 0, 0)
+
+    # High-coverage episode start times from visibility diagnostic
+    # These periods have >=4 satellites visible (handover potential)
+    high_coverage_times = [
+        start_time_base + timedelta(hours=0, minutes=40),   # 00:40 (6 sats)
+        start_time_base + timedelta(hours=0, minutes=50),   # 00:50 (5 sats)
+        start_time_base + timedelta(hours=0, minutes=55),   # 00:55 (7 sats)
+        start_time_base + timedelta(hours=1, minutes=0),    # 01:00 (7 sats)
+        start_time_base + timedelta(hours=1, minutes=5),    # 01:05 (5 sats)
+        start_time_base + timedelta(hours=1, minutes=10),   # 01:10 (5 sats)
+        start_time_base + timedelta(hours=1, minutes=15),   # 01:15 (8 sats)
+        start_time_base + timedelta(hours=1, minutes=20),   # 01:20 (6 sats)
+        start_time_base + timedelta(hours=1, minutes=25),   # 01:25 (8 sats)
+        start_time_base + timedelta(hours=1, minutes=30),   # 01:30 (9 sats)
+        start_time_base + timedelta(hours=1, minutes=35),   # 01:35 (best: 2-9 sats)
+    ]
 
     # Calculate episode stride
     if overlap_ratio > 0:
@@ -120,11 +139,19 @@ def evaluate_strategy(
     logger.info(f"Evaluating strategy: {strategy.__class__.__name__}")
     logger.info(f"  Episodes: {num_episodes}")
     logger.info(f"  Seed: {seed}")
+    logger.info(f"  ⚠️  Using coverage-aware episode sampling (11 high-coverage periods)")
 
     for episode in tqdm(range(num_episodes), desc=f"Evaluating {strategy.__class__.__name__}"):
-        # Time sampling (same as training)
-        time_offset_minutes = episode * episode_stride_minutes
-        episode_start_time = start_time_base + timedelta(minutes=time_offset_minutes)
+        # Use coverage-aware sampling: cycle through high-coverage times
+        # This ensures episodes start during periods with good satellite visibility
+        coverage_period_idx = episode % len(high_coverage_times)
+        episode_start_time = high_coverage_times[coverage_period_idx]
+
+        # For episodes beyond the first cycle, add offset
+        cycle_number = episode // len(high_coverage_times)
+        if cycle_number > 0:
+            # Add 3 hours between cycles to sample different orbital configurations
+            episode_start_time = episode_start_time + timedelta(hours=3 * cycle_number)
 
         # Reset environment
         obs, info = env.reset(seed=seed + episode, options={'start_time': episode_start_time})

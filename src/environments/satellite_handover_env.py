@@ -433,9 +433,23 @@ class SatelliteHandoverEnv(gym.Env):
                     curr_rsrp = self.current_visible_states[curr_idx].get('rsrp_dbm', -140)
 
                     # Normalize RSRP to [0, 1] range
-                    # 3GPP range: -140 to -44 dBm
-                    # Map to: 0 (worst) to 1 (best)
-                    rsrp_normalized = (curr_rsrp + 140) / ((-44) - (-140))
+                    # ✅ FIXED: Use actual physical RSRP range, not 3GPP reporting range
+                    #
+                    # SOURCE: orbit-engine Stage 5 实测数据分析
+                    # - Actual RSRP range: -44.8 to -23.3 dBm (for visible LEO satellites)
+                    # - Use wider range with margins: -60 to -20 dBm
+                    #
+                    # NOTE: 3GPP TS 38.215 reporting range (-140 to -44 dBm) is for
+                    # UE measurement quantization, NOT a physical RSRP limit!
+                    # LEO satellites at close range can have RSRP > -44 dBm.
+                    #
+                    # SOURCE: Link budget calculation (ITU-R P.525 + 3GPP)
+                    # RSRP = Tx_power + Gains - Losses
+                    # Example: 50 dBm + 50 dB - 130 dB = -30 dBm (valid!)
+                    RSRP_MIN = -60.0  # dBm - Poor signal (low elevation, far distance)
+                    RSRP_MAX = -20.0  # dBm - Excellent signal (high elevation, close range)
+
+                    rsrp_normalized = (curr_rsrp - RSRP_MIN) / (RSRP_MAX - RSRP_MIN)
                     rsrp_normalized = np.clip(rsrp_normalized, 0.0, 1.0)
 
                     # QoS reward weighted
