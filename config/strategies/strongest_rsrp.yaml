@@ -1,0 +1,55 @@
+# Strongest RSRP Strategy Configuration
+#
+# STRATEGY: Strongest RSRP (Simplest Heuristic Baseline)
+# TYPE: Heuristic (parameter-free)
+# USE CASE: Baseline lower bound for demonstrating RL improvements
+
+strategy: strongest_rsrp
+name: "Strongest RSRP"
+type: heuristic
+
+description: >
+  Always select satellite with highest RSRP (Reference Signal Received Power).
+  No thresholds, no hysteresis, no time-to-trigger.
+  Expected to have high handover rate and ping-pong handovers.
+
+# Parameters (None - this is a parameter-free strategy)
+parameters: {}
+
+# Metadata
+metadata:
+  complexity: "O(K)"  # Single pass to find argmax RSRP
+  stateless: true     # No memory of previous decisions
+  deterministic: true # Same observation → same action
+
+  # Expected performance (from orbit-engine analysis)
+  expected_performance:
+    handover_rate_pct: "8-10%"     # High (no hysteresis)
+    ping_pong_rate_pct: "10-15%"   # High (frequent back-and-forth)
+    avg_rsrp_quality: "Good"       # Always selects strongest
+    overall_reward: "Poor"         # Handover penalties dominate
+
+  # Use case
+  use_case: >
+    Baseline lower bound for comparison. Demonstrates why simple
+    heuristics are insufficient and shows the value of more
+    sophisticated strategies (A4-based, D2-based, RL methods).
+
+  # Comparison baseline
+  baseline_type: "lower_bound"
+  comparison_role: "Simplest possible strategy (no parameters)"
+
+# Academic compliance
+academic_compliance:
+  no_mock_data: true        # Uses real RSRP from ITU-R/3GPP physics
+  no_simplified_models: true # Complete physics-based RSRP calculation
+  traceable_parameters: true # Parameter-free (nothing to trace)
+
+# References
+references:
+  - "Used as baseline in multiple handover optimization studies"
+  - "Common starting point for demonstrating RL improvements"
+
+# Version
+version: "2.0.0-phase2"
+created: "2025-10-20"
