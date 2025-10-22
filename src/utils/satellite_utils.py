@@ -18,44 +18,63 @@ from typing import List, Dict, Tuple
 def load_stage4_optimized_satellites(
     stage4_output_dir: Path = None,
     return_metadata: bool = False,
-    constellation_filter: str = None
+    constellation_filter: str = None,
+    use_rl_training_data: bool = False,
+    use_candidate_pool: bool = False
 ) -> List[str]:
     """
-    Load optimized satellites from orbit-engine Stage 4 Pool Optimization output
+    Load satellites from orbit-engine Stage 4 output
 
     This function reads the scientifically selected satellite pool that has passed
     through orbit-engine's six-stage processing:
-        Stage 1: TLE Loading (8000+ candidates)
+        Stage 1: TLE Loading (9000+ candidates)
         Stage 2: Orbital Propagation
         Stage 3: Coordinate Transformation
-        Stage 4: Pool Optimization ← SOURCE OF THIS DATA
+        Stage 4: Link Feasibility ← SOURCE OF THIS DATA
         Stage 5: Signal Analysis
         Stage 6: Research Optimization
 
     Args:
         stage4_output_dir: Path to Stage 4 output directory
-                          (default: /home/sat/satellite/orbit-engine/data/outputs/stage4)
+                          (default: auto-selected based on use_rl_training_data)
         return_metadata: If True, return (satellite_ids, metadata_dict)
         constellation_filter: Filter by constellation ('starlink', 'oneweb', or None for all)
                             IMPORTANT: Cross-constellation handover is NOT supported
                             (Starlink and OneWeb are separate commercial networks)
+        use_rl_training_data: If True, use RL training data path (rl_training/stage4/)
+                             If False, use normal processing path (stage4/)
+        use_candidate_pool: If True, use candidate pool (2922 Starlink satellites)
+                           If False, use optimized pool (101 Starlink satellites)
+                           Only applies when use_rl_training_data=True
 
     Returns:
         List of satellite IDs (NORAD catalog numbers as strings):
-        - If constellation_filter='starlink': 101 Starlink satellites (550km LEO)
-        - If constellation_filter='oneweb': 24 OneWeb satellites (1200km LEO)
-        - If constellation_filter=None: 125 satellites (101 Starlink + 24 OneWeb)
+
+        Normal Mode (use_rl_training_data=False):
+        - If constellation_filter='starlink': 101-103 Starlink satellites (550km LEO)
+        - If constellation_filter='oneweb': 24-25 OneWeb satellites (1200km LEO)
+        - If constellation_filter=None: ~125 satellites (both constellations)
+
+        RL Training Mode (use_rl_training_data=True, use_candidate_pool=True):
+        - If constellation_filter='starlink': 2922 Starlink satellites (candidate pool)
+        - If constellation_filter='oneweb': 191 OneWeb satellites (candidate pool)
+        - If constellation_filter=None: 3113 satellites (both constellations)
 
     Raises:
         FileNotFoundError: If no Stage 4 output found
         ValueError: If constellation_filter is invalid
 
-    SOURCE: orbit-engine Stage 4 Pool Optimization
-    FILE: /orbit-engine/data/outputs/stage4/link_feasibility_output_YYYYMMDD_HHMMSS.json
-    FIELD: pool_optimization['optimized_pools']['starlink'] + ['oneweb']
+    SOURCE: orbit-engine Stage 4 Link Feasibility Analysis
+    FILE OPTIONS:
+    - Normal: /orbit-engine/data/outputs/stage4/link_feasibility_output_*.json
+    - RL Training: /orbit-engine/data/outputs/rl_training/stage4/link_feasibility_output_*.json
+
+    FIELD OPTIONS:
+    - Optimized Pool: pool_optimization['optimized_pools']['starlink|oneweb']
+    - Candidate Pool: feasibility_summary['candidate_pool']['by_constellation']['starlink|oneweb']
 
     Academic Compliance:
-    - NO HARDCODING: Reads from actual scientific optimization output
+    - NO HARDCODING: Reads from actual scientific processing output
     - SINGLE-CONSTELLATION TRAINING: Use constellation_filter for realistic scenarios
     - TRACEABLE: Every satellite traceable to Stage 4 selection criteria
 
@@ -64,9 +83,12 @@ def load_stage4_optimized_satellites(
     - Users cannot handover between them (like AT&T vs Verizon)
     - For RL training, use constellation_filter='starlink' or 'oneweb'
     """
-    # Default Stage 4 output directory
+    # Default Stage 4 output directory based on mode
     if stage4_output_dir is None:
-        stage4_output_dir = Path("/home/sat/satellite/orbit-engine/data/outputs/stage4")
+        if use_rl_training_data:
+            stage4_output_dir = Path("/home/sat/satellite/orbit-engine/data/outputs/rl_training/stage4")
+        else:
+            stage4_output_dir = Path("/home/sat/satellite/orbit-engine/data/outputs/stage4")
 
     # Find latest Stage 4 output file
     stage4_files = sorted(stage4_output_dir.glob("link_feasibility_output_*.json"))
@@ -92,28 +114,70 @@ def load_stage4_optimized_satellites(
             f"   Must be 'starlink', 'oneweb', or None"
         )
 
-    # Extract optimized pools
-    pools = data['pool_optimization']['optimized_pools']
-
-    # Extract satellite IDs from each constellation
+    # Extract satellite pools based on mode
     satellite_ids = []
     metadata = {}
 
-    # Starlink pool (expected: 101 satellites)
-    starlink_pool = pools.get('starlink', [])
-    starlink_ids = [sat['satellite_id'] for sat in starlink_pool]
-    metadata['starlink'] = {
-        'count': len(starlink_ids),
-        'satellites': starlink_pool
-    }
+    if use_rl_training_data and use_candidate_pool:
+        # RL Training Mode: Use candidate pool (all connectable satellites)
+        # SOURCE: feasibility_summary['candidate_pool']['by_constellation']
+        print(f"🎯 RL Training Mode: Loading candidate pool (all connectable satellites)")
 
-    # OneWeb pool (expected: 24 satellites)
-    oneweb_pool = pools.get('oneweb', [])
-    oneweb_ids = [sat['satellite_id'] for sat in oneweb_pool]
-    metadata['oneweb'] = {
-        'count': len(oneweb_ids),
-        'satellites': oneweb_pool
-    }
+        feasibility_summary = data.get('feasibility_summary', {})
+        candidate_pool = feasibility_summary.get('candidate_pool', {})
+        by_constellation = candidate_pool.get('by_constellation', {})
+
+        # Starlink candidate pool (expected: ~2922 satellites)
+        starlink_count = by_constellation.get('starlink', 0)
+        # Note: Candidate pool stores counts, not satellite lists
+        # We need to extract from connectable_satellites_candidate
+        connectable_candidate = data.get('connectable_satellites_candidate', {})
+
+        # Structure: connectable_satellites_candidate['starlink'] = [ {satellite_id, name, constellation, ...}, ... ]
+        starlink_satellites = connectable_candidate.get('starlink', [])
+        oneweb_satellites = connectable_candidate.get('oneweb', [])
+
+        # Extract satellite IDs from the lists
+        starlink_ids = [sat['satellite_id'] for sat in starlink_satellites]
+        oneweb_ids = [sat['satellite_id'] for sat in oneweb_satellites]
+
+        metadata['starlink'] = {
+            'count': len(starlink_ids),
+            'expected_count': starlink_count,
+            'source': 'candidate_pool'
+        }
+
+        metadata['oneweb'] = {
+            'count': len(oneweb_ids),
+            'expected_count': by_constellation.get('oneweb', 0),
+            'source': 'candidate_pool'
+        }
+
+        print(f"   Starlink candidates: {len(starlink_ids)} (expected ~{starlink_count})")
+        print(f"   OneWeb candidates: {len(oneweb_ids)} (expected ~{by_constellation.get('oneweb', 0)})")
+
+    else:
+        # Normal Mode: Use optimized pool
+        # SOURCE: pool_optimization['optimized_pools']
+        pools = data['pool_optimization']['optimized_pools']
+
+        # Starlink pool (expected: 101 satellites)
+        starlink_pool = pools.get('starlink', [])
+        starlink_ids = [sat['satellite_id'] for sat in starlink_pool]
+        metadata['starlink'] = {
+            'count': len(starlink_ids),
+            'satellites': starlink_pool,
+            'source': 'optimized_pool'
+        }
+
+        # OneWeb pool (expected: 24 satellites)
+        oneweb_pool = pools.get('oneweb', [])
+        oneweb_ids = [sat['satellite_id'] for sat in oneweb_pool]
+        metadata['oneweb'] = {
+            'count': len(oneweb_ids),
+            'satellites': oneweb_pool,
+            'source': 'optimized_pool'
+        }
 
     # Apply constellation filter
     if constellation_filter == 'starlink':
@@ -139,26 +203,79 @@ def load_stage4_optimized_satellites(
     starlink_count = len(starlink_ids)
     oneweb_count = len(oneweb_ids)
 
-    # Validate source data integrity
-    assert starlink_count == 101, \
-        f"❌ Expected 101 Starlink satellites, got {starlink_count}. Check Stage 4 configuration."
+    # Validate source data integrity based on mode
+    if use_rl_training_data and use_candidate_pool:
+        # RL Training Mode: Candidate pool validation (2922 Starlink, 191 OneWeb)
+        # Note: Candidate pool contains ALL connectable satellites
+        if starlink_count < 2800 or starlink_count > 3100:
+            raise ValueError(
+                f"❌ Unexpected Starlink candidate count: {starlink_count} (expected ~2922 ±100). "
+                f"Check RL training Stage 4 output."
+            )
 
-    assert oneweb_count == 24, \
-        f"❌ Expected 24 OneWeb satellites, got {oneweb_count}. Check Stage 4 configuration."
-
-    # Validate filtered result
-    if constellation_filter == 'starlink':
-        assert len(satellite_ids) == 101, \
-            f"❌ Starlink filter failed: expected 101, got {len(satellite_ids)}"
-        print(f"✅ Validation passed: 101 Starlink satellites\n")
-    elif constellation_filter == 'oneweb':
-        assert len(satellite_ids) == 24, \
-            f"❌ OneWeb filter failed: expected 24, got {len(satellite_ids)}"
-        print(f"✅ Validation passed: 24 OneWeb satellites\n")
+        if oneweb_count < 150 or oneweb_count > 230:
+            raise ValueError(
+                f"❌ Unexpected OneWeb candidate count: {oneweb_count} (expected ~191 ±40). "
+                f"Check RL training Stage 4 output."
+            )
     else:
-        assert len(satellite_ids) == 125, \
-            f"❌ Expected 125 satellites, got {len(satellite_ids)}. Stage 4 output may be corrupted."
-        print(f"✅ Validation passed: 125 satellites (101 Starlink + 24 OneWeb)\n")
+        # Normal Mode: Optimized pool validation (101 Starlink, 24 OneWeb)
+        # Note: Expected ~101 Starlink satellites (may vary based on TLE data quality)
+        if starlink_count < 90 or starlink_count > 115:
+            raise ValueError(
+                f"❌ Unexpected Starlink satellite count: {starlink_count} (expected ~101 ±15). "
+                f"Check Stage 4 configuration."
+            )
+
+        if oneweb_count < 20 or oneweb_count > 30:
+            raise ValueError(
+                f"❌ Unexpected OneWeb satellite count: {oneweb_count} (expected ~24 ±6). "
+                f"Check Stage 4 configuration."
+            )
+
+    # Validate filtered result based on mode
+    if use_rl_training_data and use_candidate_pool:
+        # RL Training Mode validation
+        if constellation_filter == 'starlink':
+            if len(satellite_ids) < 2800 or len(satellite_ids) > 3100:
+                raise ValueError(
+                    f"❌ Starlink candidate filter failed: expected ~2922 ±100, got {len(satellite_ids)}"
+                )
+            print(f"✅ Validation passed: {len(satellite_ids)} Starlink candidates (RL training pool)\n")
+        elif constellation_filter == 'oneweb':
+            if len(satellite_ids) < 150 or len(satellite_ids) > 230:
+                raise ValueError(
+                    f"❌ OneWeb candidate filter failed: expected ~191 ±40, got {len(satellite_ids)}"
+                )
+            print(f"✅ Validation passed: {len(satellite_ids)} OneWeb candidates (RL training pool)\n")
+        else:
+            # Both constellations: expected ~3113 total (2922 Starlink + 191 OneWeb)
+            if len(satellite_ids) < 2950 or len(satellite_ids) > 3330:
+                raise ValueError(
+                    f"❌ Expected ~3113 candidates ±160, got {len(satellite_ids)}. RL training Stage 4 output may be corrupted."
+                )
+            print(f"✅ Validation passed: {len(satellite_ids)} candidates ({starlink_count} Starlink + {oneweb_count} OneWeb, RL training)\n")
+    else:
+        # Normal Mode validation (relaxed range check)
+        if constellation_filter == 'starlink':
+            if len(satellite_ids) < 90 or len(satellite_ids) > 115:
+                raise ValueError(
+                    f"❌ Starlink filter failed: expected ~101 ±15, got {len(satellite_ids)}"
+                )
+            print(f"✅ Validation passed: {len(satellite_ids)} Starlink satellites (optimized pool)\n")
+        elif constellation_filter == 'oneweb':
+            if len(satellite_ids) < 20 or len(satellite_ids) > 30:
+                raise ValueError(
+                    f"❌ OneWeb filter failed: expected ~24 ±6, got {len(satellite_ids)}"
+                )
+            print(f"✅ Validation passed: {len(satellite_ids)} OneWeb satellites (optimized pool)\n")
+        else:
+            # Both constellations: expected ~125 total (101 Starlink + 24 OneWeb)
+            if len(satellite_ids) < 110 or len(satellite_ids) > 145:
+                raise ValueError(
+                    f"❌ Expected ~125 satellites ±20, got {len(satellite_ids)}. Stage 4 output may be corrupted."
+                )
+            print(f"✅ Validation passed: {len(satellite_ids)} satellites ({starlink_count} Starlink + {oneweb_count} OneWeb, optimized pool)\n")
 
     # Display satellite sample
     if constellation_filter == 'starlink' or constellation_filter is None:
@@ -194,9 +311,15 @@ def get_satellite_constellation(satellite_id: str, metadata: Dict = None) -> str
         # Use metadata from Stage 4 (most accurate)
         for constellation in ['starlink', 'oneweb']:
             if constellation in metadata:
-                sat_ids = [sat['satellite_id'] for sat in metadata[constellation]['satellites']]
-                if satellite_id in sat_ids:
-                    return constellation
+                # Handle both metadata structures:
+                # - Normal mode: metadata[constellation]['satellites'] exists
+                # - RL training mode: metadata[constellation]['satellites'] doesn't exist
+                if 'satellites' in metadata[constellation]:
+                    # Normal mode: optimized pool with full satellite data
+                    sat_ids = [sat['satellite_id'] for sat in metadata[constellation]['satellites']]
+                    if satellite_id in sat_ids:
+                        return constellation
+                # If no 'satellites' field, fall through to NORAD ID range heuristic
 
     # Fallback: NORAD ID range heuristic
     # Starlink: typically 44000-48000, 53000-56000

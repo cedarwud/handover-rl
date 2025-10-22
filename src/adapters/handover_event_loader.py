@@ -84,7 +84,14 @@ class HandoverEventLoader:
                 f"File: {stage6_file}"
             )
 
-        gpp_events = data['gpp_events']
+        # 🔑 優先使用候選池事件（RL 訓練模式，包含完整候選空間）
+        # 如果不存在候選池，回退到優化池（向後兼容）
+        if 'gpp_events_candidate' in data:
+            self.logger.info("✅ 使用候選池換手事件（RL 訓練模式 - 完整候選空間）")
+            gpp_events = data['gpp_events_candidate']
+        else:
+            self.logger.info("⚠️ 未發現候選池事件，使用優化池事件（向後兼容）")
+            gpp_events = data['gpp_events']
 
         # Extract A4 and D2 events
         a4_events = gpp_events.get('a4_events', [])

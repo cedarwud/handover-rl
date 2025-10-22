@@ -42,14 +42,14 @@ from typing import Dict, Any
 # ========== Training Level Definitions ==========
 
 TRAINING_LEVELS: Dict[int, Dict[str, Any]] = {
-    # Level 0: Smoke Test (10 minutes)
+    # Level 0: Smoke Test (TBD - need actual measurement)
     # Use Case: System verification - ensure code runs without errors
     0: {
         'name': 'Smoke Test',
-        'num_satellites': 10,
+        'num_satellites': -1,  # -1 = use all satellites from pool
         'num_episodes': 10,
-        'estimated_time_minutes': 10,
-        'estimated_time_hours': 10 / 60,
+        'estimated_time_minutes': None,  # To be measured
+        'estimated_time_hours': None,  # To be measured
         'description': 'Quick system verification - code runs without errors',
         'use_case': 'Debug, deployment verification, CI/CD testing',
         'overlap': 0.5,  # 50% overlap between episodes
@@ -58,46 +58,46 @@ TRAINING_LEVELS: Dict[int, Dict[str, Any]] = {
         'recommended': False,
     },
 
-    # Level 1: Quick Validation (2 hours) ⭐ Recommended starting point
+    # Level 1: Quick Validation (TBD) ⭐ Recommended starting point
     # Use Case: Fast idea validation, hyperparameter testing
     1: {
         'name': 'Quick Validation',
-        'num_satellites': 20,
-        'num_episodes': 100,
-        'estimated_time_minutes': 120,
-        'estimated_time_hours': 2.0,
+        'num_satellites': -1,  # -1 = use all satellites from pool
+        'num_episodes': 50,  # Reduced from 100 to speed up initial validation
+        'estimated_time_minutes': None,  # To be measured
+        'estimated_time_hours': None,  # To be measured
         'description': 'Verify training logic, observe learning curve',
         'use_case': 'Fast idea validation, hyperparameter testing, algorithm comparison',
         'overlap': 0.5,
         'log_interval': 10,
-        'checkpoint_interval': 50,
+        'checkpoint_interval': 25,
         'recommended': True,  # ⭐ Recommended starting point
     },
 
-    # Level 2: Development (6 hours)
+    # Level 2: Development (TBD)
     # Use Case: Development iteration, debugging
     2: {
         'name': 'Development',
-        'num_satellites': 50,
-        'num_episodes': 300,
-        'estimated_time_minutes': 360,
-        'estimated_time_hours': 6.0,
+        'num_satellites': -1,  # -1 = use all satellites from pool
+        'num_episodes': 200,  # Reduced from 300
+        'estimated_time_minutes': None,  # To be measured
+        'estimated_time_hours': None,  # To be measured
         'description': 'Debug hyperparameters and reward functions',
         'use_case': 'Development iteration, reward shaping, debugging',
         'overlap': 0.5,
         'log_interval': 10,
-        'checkpoint_interval': 100,
+        'checkpoint_interval': 50,
         'recommended': False,
     },
 
-    # Level 3: Validation (10 hours)
+    # Level 3: Validation (TBD)
     # Use Case: Validate effectiveness, paper draft experiments
     3: {
         'name': 'Validation',
-        'num_satellites': 101,  # Full Starlink pool
+        'num_satellites': -1,  # -1 = use all satellites from pool
         'num_episodes': 500,
-        'estimated_time_minutes': 600,
-        'estimated_time_hours': 10.0,
+        'estimated_time_minutes': None,  # To be measured
+        'estimated_time_hours': None,  # To be measured
         'description': 'Validate effectiveness with full satellite pool',
         'use_case': 'Paper draft experiments, baseline validation',
         'overlap': 0.5,
@@ -106,14 +106,14 @@ TRAINING_LEVELS: Dict[int, Dict[str, Any]] = {
         'recommended': False,
     },
 
-    # Level 4: Baseline (21 hours)
+    # Level 4: Baseline (TBD)
     # Use Case: Establish stable baseline for paper experiments
     4: {
         'name': 'Baseline',
-        'num_satellites': 101,
+        'num_satellites': -1,  # -1 = use all satellites from pool
         'num_episodes': 1000,
-        'estimated_time_minutes': 1260,
-        'estimated_time_hours': 21.0,
+        'estimated_time_minutes': None,  # To be measured
+        'estimated_time_hours': None,  # To be measured
         'description': 'Establish stable baseline for comparisons',
         'use_case': 'Paper experiments, baseline establishment',
         'overlap': 0.5,
@@ -122,14 +122,14 @@ TRAINING_LEVELS: Dict[int, Dict[str, Any]] = {
         'recommended': False,
     },
 
-    # Level 5: Full Training (35 hours)
+    # Level 5: Full Training (TBD)
     # Use Case: Final paper experiments, publication-quality results
     5: {
         'name': 'Full Training',
-        'num_satellites': 101,
+        'num_satellites': -1,  # -1 = use all satellites from pool
         'num_episodes': 1700,
-        'estimated_time_minutes': 2100,
-        'estimated_time_hours': 35.0,
+        'estimated_time_minutes': None,  # To be measured
+        'estimated_time_hours': None,  # To be measured
         'description': 'Complete training for publication-quality results',
         'use_case': 'Final paper experiments, publication results',
         'overlap': 0.5,
@@ -241,16 +241,18 @@ def validate_level_config(level: int) -> bool:
         assert field in config, f"Level {level} missing field: {field}"
 
     # Validation rules
-    assert config['num_satellites'] > 0, "num_satellites must be positive"
+    assert config['num_satellites'] == -1 or config['num_satellites'] > 0, \
+        "num_satellites must be -1 (all) or positive"
     assert config['num_episodes'] > 0, "num_episodes must be positive"
     assert 0 <= config['overlap'] <= 1, "overlap must be in [0, 1]"
     assert config['log_interval'] > 0, "log_interval must be positive"
     assert config['checkpoint_interval'] > 0, "checkpoint_interval must be positive"
 
-    # Time consistency
-    expected_hours = config['estimated_time_minutes'] / 60
-    assert abs(expected_hours - config['estimated_time_hours']) < 0.01, \
-        "Time estimates inconsistent"
+    # Time consistency (skip if not yet measured)
+    if config['estimated_time_minutes'] is not None and config['estimated_time_hours'] is not None:
+        expected_hours = config['estimated_time_minutes'] / 60
+        assert abs(expected_hours - config['estimated_time_hours']) < 0.01, \
+            "Time estimates inconsistent"
 
     return True
 

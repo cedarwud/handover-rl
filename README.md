@@ -11,12 +11,14 @@
 
 ## 🎯 Current Status
 
-- ✅ **DQN Baseline**: Online RL with Starlink constellation (101 satellites)
+- ✅ **BC Training Complete**: 88.81% accuracy (target: 85-95%) - See [BC V4 Report](docs/reports/TRAINING_REPORT_V4_FINAL.md)
+- ✅ **Data Leakage Fixed**: Eliminated 100% accuracy problem - See [Diagnosis](docs/reports/DIAGNOSIS_100_ACCURACY.md)
+- ✅ **Threshold Design**: Data-driven (-34.5 dBm) - See [Recommendations](docs/reports/FINAL_THRESHOLD_RECOMMENDATIONS.md)
+- 📍 **Next**: DQN Training with BC warm-start - See [Project Status](docs/PROJECT_STATUS.md)
 - ✅ **Gymnasium Environment**: Standards-compliant, algorithm-agnostic
 - ✅ **Multi-Level Training**: 10 minutes → 35 hours progressive strategy
-- 🚧 **Modular Architecture**: Refactoring to support DQN/PPO/A2C (planned)
 
-**Last Updated**: 2025-10-19
+**Last Updated**: 2025-10-21
 
 ---
 
@@ -194,6 +196,19 @@ For understanding LEO satellite handover research landscape, see [Baseline Algor
 ---
 
 ## 📖 Documentation
+
+**完整文檔索引**: [docs/README.md](docs/README.md) ⭐
+
+### Current Status & Reports (2025-10-21) ⭐ NEW
+
+| 文檔 | 說明 |
+|------|------|
+| **[Project Status](docs/PROJECT_STATUS.md)** | 當前項目狀態與待辦事項 ⭐ |
+| **[BC 訓練總結](docs/reports/FINAL_SOLUTION_SUMMARY.md)** | 完整解決方案（必讀）|
+| **[訓練報告 V4](docs/reports/TRAINING_REPORT_V4_FINAL.md)** | BC V4 訓練詳細報告 |
+| **[數據洩漏診斷](docs/reports/DIAGNOSIS_100_ACCURACY.md)** | 100% 準確率問題分析 |
+| **[閾值建議](docs/reports/FINAL_THRESHOLD_RECOMMENDATIONS.md)** | 數據驅動閾值設計 |
+| **[清理報告](docs/reports/CLEANUP_REPORT.md)** | 項目結構整理記錄 |
 
 ### Quick References
 - **[Quick Start](docs/training/QUICKSTART.md)** - Get started in 5 minutes

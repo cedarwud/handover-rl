@@ -138,12 +138,16 @@ def train(config, level_config, args, logger):
 
     # Load satellite pool
     logger.info("=" * 80)
-    logger.info("Loading optimized satellite pool from orbit-engine Stage 4...")
+    logger.info("Loading satellite pool from orbit-engine Stage 4...")
     logger.info("=" * 80)
 
+    # Use RL training data (candidate pool with ~2922 Starlink satellites)
+    # This provides richer state space for RL training compared to optimized pool (101 satellites)
     satellite_ids, metadata = load_stage4_optimized_satellites(
         constellation_filter='starlink',
-        return_metadata=True
+        return_metadata=True,
+        use_rl_training_data=True,  # Use RL training data path
+        use_candidate_pool=True      # Use candidate pool (2922 satellites vs 101 optimized)
     )
 
     # Verify integrity
@@ -154,17 +158,22 @@ def train(config, level_config, args, logger):
     )
     logger.info(message)
 
-    # Use subset based on training level
-    num_satellites = level_config['num_satellites']
-    if num_satellites < len(satellite_ids):
-        logger.info(f"\n⚙️  Training Level {args.level}: Using {num_satellites} satellites")
-        satellite_ids = satellite_ids[:num_satellites]
+    # Use all satellites from pool (no subsetting)
+    # Note: num_satellites=-1 means use all satellites
+    num_satellites_config = level_config['num_satellites']
+    if num_satellites_config != -1:
+        logger.warning(f"⚠️  Level {args.level} specifies {num_satellites_config} satellites, but using all {len(satellite_ids)} from pool")
 
     logger.info(f"\n📊 Final Satellite Pool:")
     logger.info(f"   Constellation: Starlink")
-    logger.info(f"   Total: {len(satellite_ids)} satellites")
+    logger.info(f"   Total: {len(satellite_ids)} satellites (full pool)")
     logger.info(f"   Training Level: {args.level} ({level_config['name']})")
-    logger.info(f"   Estimated Time: {level_config['estimated_time_hours']:.1f}h")
+    logger.info(f"   Episodes: {level_config['num_episodes']}")
+    time_est = level_config['estimated_time_hours']
+    if time_est is not None:
+        logger.info(f"   Estimated Time: {time_est:.1f}h")
+    else:
+        logger.info(f"   Estimated Time: TBD (need measurement)")
     logger.info(f"   First 5: {satellite_ids[:5]}")
     logger.info(f"   Last 5: {satellite_ids[-5:]}")
     logger.info(f"=" * 80 + "\n")
@@ -441,8 +450,13 @@ Multi-Level Training Strategy:
     logger.info(f"{'='*80}")
     logger.info(f"Algorithm: {args.algorithm.upper()}")
     logger.info(f"Training Level: {args.level} ({level_config['name']})")
-    logger.info(f"Estimated Time: {level_config['estimated_time_hours']:.1f}h")
-    logger.info(f"Satellites: {level_config['num_satellites']}")
+    time_est = level_config['estimated_time_hours']
+    if time_est is not None:
+        logger.info(f"Estimated Time: {time_est:.1f}h")
+    else:
+        logger.info(f"Estimated Time: TBD (will measure during test)")
+    num_sats = level_config['num_satellites']
+    logger.info(f"Satellites: {'All from pool' if num_sats == -1 else num_sats}")
     logger.info(f"Episodes: {level_config['num_episodes']}")
     logger.info(f"Output Directory: {args.output_dir}")
     logger.info(f"Config File: {args.config}")

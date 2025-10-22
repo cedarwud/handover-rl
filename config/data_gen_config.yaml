@@ -13,8 +13,8 @@ data_generation:
   time_span_days: 30  # Can be overridden with --days flag (1, 7, 30)
   time_step_seconds: 5  # ⚠️ ASSUMPTION - needs experimental validation
 
-  # Episode Duration (from orbital mechanics)
-  episode_duration_minutes: 95  # Starlink orbital period
+  # Episode Duration (from RL literature - IEEE TAES 2024, He et al. 2021)
+  episode_duration_minutes: 10  # Changed from 95 to match academic papers (600 seconds)
 
   # Ground truth labeling
   ground_truth_lookahead_steps: 10  # Future lookahead for action labeling
@@ -53,7 +53,7 @@ data_generation:
 
     # TLE file location (parallel directory structure)
     # Note: Multi-constellation TLEs loaded, but only Starlink satellites used
-    tle_directory: "../orbit-engine/data/tle_data/starlink/tle"
+    tle_directory: "../tle_data/starlink/tle"
     file_pattern: "starlink_*.tle"
 
   # Episode Construction
@@ -215,5 +215,5 @@ estimates:
 # ✅ Configuration for OrbitEngineAdapter
 orbit_engine:
   orbit_engine_root: "../orbit-engine"  # Path to orbit-engine directory
-  tle_data_dir: "../orbit-engine/data/tle"  # TLE data directory
+  tle_data_dir: "../tle_data"  # TLE data directory (parallel to orbit-engine)
   cache_dir: "data/cache"  # Cache directory for orbit-engine data
