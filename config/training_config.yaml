@@ -76,10 +76,10 @@ dqn:
 # Environment Configuration
 environment:
   # State Space
-  state_dim: 12  # Number of features
+  state_dim: 77  # Number of features (11 per satellite × 6 satellites + 11 serving satellite)
 
   # Action Space
-  action_dim: 2  # 0: keep current satellite, 1: handover to best neighbor
+  action_dim: 6  # 0: stay on serving satellite, 1-5: handover to candidate 1-5
 
   # Reward Function
   # 🎲 ASSUMPTIONS: These weights are COMPLETELY ASSUMED and need tuning!

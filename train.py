@@ -141,13 +141,14 @@ def train(config, level_config, args, logger):
     logger.info("Loading satellite pool from orbit-engine Stage 4...")
     logger.info("=" * 80)
 
-    # Use RL training data (candidate pool with ~2922 Starlink satellites)
-    # This provides richer state space for RL training compared to optimized pool (101 satellites)
+    # Use RL training data (elite pool with ~123 satellites)
+    # Elite pool avoids state space explosion while maintaining coverage quality
+    # SOURCE: Previous discussion on diversity explosion with 3,262 candidate pool
     satellite_ids, metadata = load_stage4_optimized_satellites(
         constellation_filter='starlink',
         return_metadata=True,
-        use_rl_training_data=True,  # Use RL training data path
-        use_candidate_pool=True      # Use candidate pool (2922 satellites vs 101 optimized)
+        use_rl_training_data=True,   # Use RL training data path
+        use_candidate_pool=False      # Use elite pool (123 satellites) - avoids diversity explosion
     )
 
     # Verify integrity
