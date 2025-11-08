@@ -1,7 +1,11 @@
 #!/bin/bash
 # 快速查看訓練進度
 
-LOG_FILE="training_level5_20min_final.log"
+# 獲取腳本所在目錄的父目錄（project root）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+LOG_FILE="$PROJECT_ROOT/logs/training_level5_20min_final.log"
 
 echo "=========================================="
 echo "🚀 訓練進度報告"

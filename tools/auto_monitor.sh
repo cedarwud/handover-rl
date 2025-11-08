@@ -1,8 +1,12 @@
 #!/bin/bash
 # 智能訓練監控 - 自動檢查並修復問題
 
-LOG_FILE="training_level5_20min_final.log"
-MONITOR_LOG="training_monitor.log"
+# 獲取腳本所在目錄的父目錄（project root）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+LOG_FILE="$PROJECT_ROOT/logs/training_level5_20min_final.log"
+MONITOR_LOG="$PROJECT_ROOT/logs/training_monitor.log"
 CHECK_INTERVAL=300  # 5 分鐘檢查一次
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🤖 智能監控啟動" | tee -a "$MONITOR_LOG"

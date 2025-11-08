@@ -1,7 +1,11 @@
 #!/bin/bash
 # 查看監控日誌
 
-MONITOR_LOG="training_monitor.log"
+# 獲取腳本所在目錄的父目錄（project root）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+MONITOR_LOG="$PROJECT_ROOT/logs/training_monitor.log"
 
 if [ ! -f "$MONITOR_LOG" ]; then
     echo "❌ 監控日誌尚未生成"

@@ -6,7 +6,11 @@ echo "訓練日誌查看器"
 echo "========================================"
 echo ""
 
-LOG_FILE="training_level5_20min_final.log"
+# 獲取腳本所在目錄的父目錄（project root）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+LOG_FILE="$PROJECT_ROOT/logs/training_level5_20min_final.log"
 
 echo "📊 最新 Episode 統計 (每 10 episodes 報告):"
 echo "----------------------------------------"
