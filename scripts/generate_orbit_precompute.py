@@ -45,6 +45,7 @@ import logging
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from adapters import OrbitEngineAdapter, OrbitPrecomputeGenerator
+from utils.satellite_utils import load_stage4_optimized_satellites
 
 # Setup logging
 logging.basicConfig(
@@ -111,6 +112,12 @@ def parse_args():
         help='Limit number of satellites (for testing, default: all)'
     )
 
+    parser.add_argument(
+        '--yes', '-y',
+        action='store_true',
+        help='Auto-confirm (skip interactive prompt)'
+    )
+
     return parser.parse_args()
 
 
@@ -124,23 +131,27 @@ def load_config(config_path: str) -> dict:
     return config
 
 
-def get_satellite_ids(adapter, limit=None):
-    """Get list of satellite IDs from adapter."""
-    logger.info("Getting satellite IDs from TLE loader...")
+def get_satellite_ids(limit=None):
+    """Get list of satellite IDs using same logic as train.py."""
+    logger.info("Loading satellite pool from orbit-engine Stage 4...")
 
-    all_satellites = adapter.tle_loader.get_available_satellites()
+    # Use same satellite loading as train.py
+    satellite_ids, metadata = load_stage4_optimized_satellites(
+        constellation_filter='starlink',
+        return_metadata=True,
+        use_rl_training_data=False,   # Use standard stage4 output path
+        use_candidate_pool=False       # Use optimized pool (not candidate pool)
+    )
 
-    logger.info(f"  Total available: {len(all_satellites)}")
+    logger.info(f"  Total from optimized pool: {len(satellite_ids)}")
 
     if limit:
-        satellites = all_satellites[:limit]
+        satellite_ids = satellite_ids[:limit]
         logger.warning(f"  Limited to first {limit} satellites (for testing)")
-    else:
-        satellites = all_satellites
 
-    logger.info(f"  Will precompute: {len(satellites)} satellites")
+    logger.info(f"  Will precompute: {len(satellite_ids)} satellites")
 
-    return satellites
+    return satellite_ids
 
 
 def main():
@@ -186,8 +197,8 @@ def main():
 
     adapter = OrbitEngineAdapter(config)
 
-    # Get satellite IDs
-    satellite_ids = get_satellite_ids(adapter, limit=args.satellite_limit)
+    # Get satellite IDs (using same pool as train.py)
+    satellite_ids = get_satellite_ids(limit=args.satellite_limit)
 
     # Initialize generator
     logger.info("\nInitializing OrbitPrecomputeGenerator...")
@@ -212,10 +223,13 @@ def main():
     print(f"This will take approximately {generator._estimate_time(num_timesteps)} minutes.")
     print(f"{'='*60}\n")
 
-    response = input("Continue? (yes/no): ").strip().lower()
-    if response not in ['yes', 'y']:
-        logger.info("Cancelled by user")
-        sys.exit(0)
+    if not args.yes:
+        response = input("Continue? (yes/no): ").strip().lower()
+        if response not in ['yes', 'y']:
+            logger.info("Cancelled by user")
+            sys.exit(0)
+    else:
+        logger.info("Auto-confirmed with --yes flag")
 
     # Generate table
     logger.info("\n" + "="*60)

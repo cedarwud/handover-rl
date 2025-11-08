@@ -28,6 +28,8 @@ from tqdm import tqdm
 import multiprocessing as mp
 from functools import partial
 
+from ._precompute_worker import compute_satellite_states
+
 logger = logging.getLogger(__name__)
 
 
@@ -301,35 +303,8 @@ class OrbitPrecomputeGenerator:
         logger.warning("   Will automatically fall back to serial mode if it fails")
 
         try:
-            # Create worker function that recreates adapter in each process
-            def compute_satellite_states(args):
-                """Worker function - recreates adapter to avoid serialization issues."""
-                sat_id, config, timestamps_list = args
-
-                # Import here to avoid circular imports
-                from adapters import OrbitEngineAdapter
-
-                # Each worker creates its own adapter instance
-                # This avoids multiprocessing serialization issues
-                worker_adapter = OrbitEngineAdapter(config)
-
-                states_array = np.zeros((len(timestamps_list), len(self.STATE_FIELDS)), dtype=np.float32)
-
-                for t_idx, timestamp in enumerate(timestamps_list):
-                    try:
-                        state_dict = worker_adapter.calculate_state(
-                            satellite_id=sat_id,
-                            timestamp=timestamp
-                        )
-
-                        for field_idx, field in enumerate(self.STATE_FIELDS):
-                            states_array[t_idx, field_idx] = state_dict.get(field, np.nan)
-
-                    except Exception as e:
-                        # Fill with NaN on error
-                        states_array[t_idx, :] = np.nan
-
-                return sat_id, states_array
+            # Use module-level worker function (must be picklable for multiprocessing)
+            # See _precompute_worker.py for implementation
 
             # Prepare arguments for each worker
             worker_args = [
