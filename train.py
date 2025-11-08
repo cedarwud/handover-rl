@@ -53,7 +53,7 @@ sys.path.insert(0, str(Path(__file__).parent / 'src'))
 # Import framework components
 from adapters.orbit_engine_adapter import OrbitEngineAdapter
 from environments.satellite_handover_env import SatelliteHandoverEnv
-from agents import DQNAgent
+from agents import DQNAgent, DoubleDQNAgent
 from trainers import OffPolicyTrainer
 from utils.satellite_utils import load_stage4_optimized_satellites, verify_satellite_pool_integrity
 from configs import get_level_config
@@ -65,11 +65,16 @@ ALGORITHM_REGISTRY = {
     'dqn': {
         'agent_class': DQNAgent,
         'trainer_class': OffPolicyTrainer,
-        'description': 'Deep Q-Network (standard DQN)',
+        'description': 'Deep Q-Network (Vanilla DQN - Mnih et al., 2015)',
+        'type': 'off-policy',
+    },
+    'ddqn': {
+        'agent_class': DoubleDQNAgent,
+        'trainer_class': OffPolicyTrainer,
+        'description': 'Double DQN (van Hasselt et al., 2016) - Reduces Q-value overestimation',
         'type': 'off-policy',
     },
     # Future algorithms can be added here
-    # 'double_dqn': {...},
     # 'ppo': {...},
     # 'a2c': {...},
 }
@@ -141,14 +146,14 @@ def train(config, level_config, args, logger):
     logger.info("Loading satellite pool from orbit-engine Stage 4...")
     logger.info("=" * 80)
 
-    # Use RL training data (elite pool with ~123 satellites)
-    # Elite pool avoids state space explosion while maintaining coverage quality
-    # SOURCE: Previous discussion on diversity explosion with 3,262 candidate pool
+    # Use Stage 4 optimized pool (~97 Starlink satellites from orbit-engine)
+    # Optimized pool selected via pool_optimizer for best coverage
+    # SOURCE: orbit-engine Stage 4 Pool Optimization output
     satellite_ids, metadata = load_stage4_optimized_satellites(
         constellation_filter='starlink',
         return_metadata=True,
-        use_rl_training_data=True,   # Use RL training data path
-        use_candidate_pool=False      # Use elite pool (123 satellites) - avoids diversity explosion
+        use_rl_training_data=False,   # Use standard stage4 output path
+        use_candidate_pool=False       # Use optimized pool (not candidate pool)
     )
 
     # Verify integrity
@@ -179,10 +184,30 @@ def train(config, level_config, args, logger):
     logger.info(f"   Last 5: {satellite_ids[-5:]}")
     logger.info(f"=" * 80 + "\n")
 
-    # Create environment
+    # Create environment (single or vectorized)
     logger.info("Creating environment...")
-    env = SatelliteHandoverEnv(adapter, satellite_ids, config)
-    logger.info("✅ Environment created")
+
+    if args.num_envs > 1:
+        # Multi-core training with AsyncVectorEnv
+        from gymnasium.vector import AsyncVectorEnv
+
+        logger.info(f"  Using {args.num_envs} parallel environments")
+
+        def make_env(env_id):
+            """Factory function to create independent environment instances"""
+            def _init():
+                # Each environment needs its own adapter instance to avoid shared state
+                env_adapter = OrbitEngineAdapter(config)
+                return SatelliteHandoverEnv(env_adapter, satellite_ids, config)
+            return _init
+
+        # Create vectorized environment
+        env = AsyncVectorEnv([make_env(i) for i in range(args.num_envs)])
+        logger.info(f"✅ Vectorized environment created ({args.num_envs} workers)")
+    else:
+        # Single environment (original behavior)
+        env = SatelliteHandoverEnv(adapter, satellite_ids, config)
+        logger.info("✅ Environment created")
 
     # Get algorithm info
     algo_info = ALGORITHM_REGISTRY[args.algorithm]
@@ -190,7 +215,12 @@ def train(config, level_config, args, logger):
     # Create agent
     logger.info(f"Creating {args.algorithm.upper()} agent...")
     AgentClass = algo_info['agent_class']
-    agent = AgentClass(env.observation_space, env.action_space, config)
+
+    # Use single spaces for vectorized environments
+    obs_space = env.single_observation_space if args.num_envs > 1 else env.observation_space
+    act_space = env.single_action_space if args.num_envs > 1 else env.action_space
+
+    agent = AgentClass(obs_space, act_space, config)
     logger.info("✅ Agent created")
 
     # Load checkpoint if specified
@@ -229,17 +259,31 @@ def train(config, level_config, args, logger):
     logger.info(f"Training Level: {args.level} ({level_config['name']})")
     logger.info(f"{'='*80}\n")
 
+    # Check if using vectorized environment
+    from gymnasium.vector import VectorEnv
+    is_vectorized = isinstance(env, VectorEnv)
+
+    if is_vectorized:
+        logger.info(f"Using vectorized training with {env.num_envs} environments")
+
     for episode in tqdm(range(num_episodes), desc="Training"):
         # Continuous time sampling with sliding window
         time_offset_minutes = episode * episode_stride_minutes
         episode_start_time = start_time_base + timedelta(minutes=time_offset_minutes)
 
-        # Train one episode using trainer
-        metrics = trainer.train_episode(
-            episode_idx=episode,
-            episode_start_time=episode_start_time,
-            seed=args.seed + episode
-        )
+        # Train one episode using appropriate method
+        if is_vectorized:
+            metrics = trainer.train_episode_vectorized(
+                episode_idx=episode,
+                episode_start_time=episode_start_time,
+                seed=args.seed + episode
+            )
+        else:
+            metrics = trainer.train_episode(
+                episode_idx=episode,
+                episode_start_time=episode_start_time,
+                seed=args.seed + episode
+            )
 
         # Record metrics
         episode_rewards.append(metrics['reward'])
@@ -401,6 +445,13 @@ Multi-Level Training Strategy:
         help='Path to checkpoint to resume from'
     )
 
+    # Multi-core training
+    parser.add_argument(
+        '--num-envs', type=int,
+        default=1,
+        help='Number of parallel environments (1-32). Use 8-16 for best performance, 30 for maximum speed.'
+    )
+
     args = parser.parse_args()
 
     # Load base config
@@ -459,6 +510,10 @@ Multi-Level Training Strategy:
     num_sats = level_config['num_satellites']
     logger.info(f"Satellites: {'All from pool' if num_sats == -1 else num_sats}")
     logger.info(f"Episodes: {level_config['num_episodes']}")
+    logger.info(f"Parallel Environments: {args.num_envs}")
+    if args.num_envs > 1:
+        speedup = min(args.num_envs * 0.7, 5.0)  # Rough estimate
+        logger.info(f"Expected Speedup: ~{speedup:.1f}x")
     logger.info(f"Output Directory: {args.output_dir}")
     logger.info(f"Config File: {args.config}")
     logger.info(f"Seed: {args.seed}")

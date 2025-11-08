@@ -137,6 +137,22 @@ TRAINING_LEVELS: Dict[int, Dict[str, Any]] = {
         'checkpoint_interval': 100,
         'recommended': False,
     },
+
+    # Level 6: Long-term Training (Measured: ~104 hours)
+    # Use Case: Reach 1M training steps standard for academic publication
+    6: {
+        'name': 'Long-term Training',
+        'num_satellites': -1,  # -1 = use all satellites from pool
+        'num_episodes': 17000,
+        'estimated_time_minutes': 6240,  # 104 hours = 6240 minutes
+        'estimated_time_hours': 104.0,   # 4.3 days
+        'description': 'Long-term training to reach ~1M training steps (MuJoCo standard)',
+        'use_case': 'Academic publication, sufficient training量for peer review',
+        'overlap': 0.5,
+        'log_interval': 10,
+        'checkpoint_interval': 500,  # Save more frequently for long training
+        'recommended': True,  # ⭐ Recommended for publication
+    },
 }
 
 
@@ -147,13 +163,13 @@ def get_level_config(level: int) -> Dict[str, Any]:
     Get configuration for specific training level
 
     Args:
-        level: Training level (0-5)
+        level: Training level (0-6)
 
     Returns:
         config: Dictionary containing level configuration
 
     Raises:
-        ValueError: If level is not in range 0-5
+        ValueError: If level is not in range 0-6
 
     Example:
         >>> config = get_level_config(1)
@@ -166,7 +182,7 @@ def get_level_config(level: int) -> Dict[str, Any]:
     """
     if level not in TRAINING_LEVELS:
         raise ValueError(
-            f"Invalid training level: {level}. Must be 0-5.\n"
+            f"Invalid training level: {level}. Must be 0-6.\n"
             f"Available levels:\n"
             + "\n".join([
                 f"  Level {lvl}: {cfg['name']} ({cfg['estimated_time_hours']}h, "

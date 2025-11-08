@@ -59,8 +59,19 @@ gymnasium>=1.0.0        # Modern RL environment API (we use 1.2.1)
 # Visualization & Logging
 # ============================================================================
 matplotlib>=3.7.0
+seaborn>=0.12.0          # Statistical visualization for publication-quality figures
 tensorboard>=2.13.0
 pillow>=10.0.0
+scienceplots>=2.0.0      # Academic paper styles (IEEE, Nature, Science)
+
+# ============================================================================
+# Real-time Monitoring & API
+# ============================================================================
+fastapi>=0.104.0         # Modern API framework (推薦用於整合)
+uvicorn[standard]>=0.24.0 # ASGI server for FastAPI
+pydantic>=2.0.0          # Already in requirements, data validation
+flask>=2.3.0             # Alternative: Standalone dashboard (可選)
+plotly>=5.14.0           # Interactive charts (可選)
 
 # ============================================================================
 # Testing (pytest for environment validation)

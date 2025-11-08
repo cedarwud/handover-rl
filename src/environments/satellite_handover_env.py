@@ -79,6 +79,8 @@ class SatelliteHandoverEnv(gym.Env):
         reward_config = env_config.get('reward', {})
         self.reward_weights = {
             'qos': reward_config.get('qos_weight', 1.0),
+            'sinr_weight': reward_config.get('sinr_weight', 0.0),  # Multi-objective
+            'latency_weight': reward_config.get('latency_weight', 0.0),  # Multi-objective
             'handover_penalty': reward_config.get('handover_penalty', -0.1),
             'ping_pong_penalty': reward_config.get('ping_pong_penalty', -0.2),
         }
@@ -163,11 +165,16 @@ class SatelliteHandoverEnv(gym.Env):
             # No satellites visible - episode will end immediately
             self.current_satellite = None
 
+        # Generate action mask: only allow valid actions
+        # action_mask[i] = True if action i is valid, False otherwise
+        action_mask = self._get_action_mask()
+
         info = {
             'current_satellite': self.current_satellite,
             'num_visible': len(self.current_visible_satellites),
             'episode_start': self.episode_start.isoformat(),
             'current_time': self.current_time.isoformat(),
+            'action_mask': action_mask,
         }
 
         logger.debug(f"Environment reset - {info['num_visible']} visible satellites")
@@ -268,12 +275,16 @@ class SatelliteHandoverEnv(gym.Env):
                     self.episode_stats['timesteps']
                 )
 
+        # Generate action mask for next step
+        action_mask = self._get_action_mask()
+
         # Build info dict
         info = {
             'current_satellite': self.current_satellite,
             'num_visible': len(self.current_visible_satellites),
             'handover_occurred': handover_occurred,
             'current_time': self.current_time.isoformat(),
+            'action_mask': action_mask,
             **self.episode_stats,
         }
 
@@ -361,6 +372,33 @@ class SatelliteHandoverEnv(gym.Env):
         logger.debug(f"Observation generated: {len(top_satellites)}/{len(visible_satellites)} "
                      f"top satellites from {len(self.satellite_ids)} total")
 
+        # ====== NUMERICAL STABILITY CHECK: Observation ======
+        if np.isnan(observation).any():
+            logger.error(f"[NaN Detection] NaN detected in observation at time {self.current_time}")
+            logger.error(f"  Observation shape: {observation.shape}")
+            logger.error(f"  Number of visible satellites: {len(top_satellites)}")
+            # Find which satellites have NaN
+            nan_mask = np.isnan(observation).any(axis=1)
+            for i, has_nan in enumerate(nan_mask):
+                if has_nan and i < len(top_satellites):
+                    logger.error(f"  Satellite {i} ({top_satellites[i]['id']}) has NaN in state")
+                    logger.error(f"    State dict: {top_satellites[i]['state_dict']}")
+            # Replace NaN with zeros as fallback
+            observation = np.nan_to_num(observation, nan=0.0)
+
+        if np.isinf(observation).any():
+            logger.error(f"[Inf Detection] Inf detected in observation at time {self.current_time}")
+            logger.error(f"  Observation shape: {observation.shape}")
+            logger.error(f"  Observation min: {np.min(observation)}, max: {np.max(observation)}")
+            # Find which satellites have Inf
+            inf_mask = np.isinf(observation).any(axis=1)
+            for i, has_inf in enumerate(inf_mask):
+                if has_inf and i < len(top_satellites):
+                    logger.error(f"  Satellite {i} ({top_satellites[i]['id']}) has Inf in state")
+                    logger.error(f"    State dict: {top_satellites[i]['state_dict']}")
+            # Replace Inf with large but finite values
+            observation = np.nan_to_num(observation, posinf=1e6, neginf=-1e6)
+
         return observation
 
     def _state_dict_to_vector(self, state_dict: Dict) -> np.ndarray:
@@ -408,8 +446,10 @@ class SatelliteHandoverEnv(gym.Env):
         """
         Calculate multi-objective reward
 
-        Based on Graph RL paper reward structure:
+        Enhanced reward structure (aligned with MPNN-DQN 2024):
         - QoS component (RSRP-based)
+        - Signal quality (SINR-based for data rate)
+        - Latency penalty (propagation delay)
         - Handover penalty
         - Ping-pong penalty
 
@@ -424,37 +464,46 @@ class SatelliteHandoverEnv(gym.Env):
         """
         reward = 0.0
 
-        # Component 1: QoS reward (based on current RSRP)
-        # Higher RSRP = better signal quality = higher reward
+        # Component 1-3: QoS, Signal Quality, Latency
         if curr_sat and len(self.current_visible_satellites) > 0:
             try:
                 curr_idx = self.current_visible_satellites.index(curr_sat)
                 if curr_idx < len(self.current_visible_states):
-                    curr_rsrp = self.current_visible_states[curr_idx].get('rsrp_dbm', -140)
+                    state = self.current_visible_states[curr_idx]
 
-                    # Normalize RSRP to [0, 1] range
-                    # ✅ FIXED: Use actual physical RSRP range, not 3GPP reporting range
-                    #
-                    # SOURCE: orbit-engine Stage 5 实测数据分析
-                    # - Actual RSRP range: -44.8 to -23.3 dBm (for visible LEO satellites)
-                    # - Use wider range with margins: -60 to -20 dBm
-                    #
-                    # NOTE: 3GPP TS 38.215 reporting range (-140 to -44 dBm) is for
-                    # UE measurement quantization, NOT a physical RSRP limit!
-                    # LEO satellites at close range can have RSRP > -44 dBm.
-                    #
-                    # SOURCE: Link budget calculation (ITU-R P.525 + 3GPP)
-                    # RSRP = Tx_power + Gains - Losses
-                    # Example: 50 dBm + 50 dB - 130 dB = -30 dBm (valid!)
-                    RSRP_MIN = -60.0  # dBm - Poor signal (low elevation, far distance)
-                    RSRP_MAX = -20.0  # dBm - Excellent signal (high elevation, close range)
-
+                    # Component 1: QoS reward (RSRP-based)
+                    curr_rsrp = state.get('rsrp_dbm', -140)
+                    RSRP_MIN = -60.0  # dBm - Poor signal
+                    RSRP_MAX = -20.0  # dBm - Excellent signal
                     rsrp_normalized = (curr_rsrp - RSRP_MIN) / (RSRP_MAX - RSRP_MIN)
                     rsrp_normalized = np.clip(rsrp_normalized, 0.0, 1.0)
-
-                    # QoS reward weighted
                     qos_reward = rsrp_normalized * self.reward_weights['qos']
                     reward += qos_reward
+
+                    # Component 2: Signal quality (SINR-based)
+                    # Higher SINR = higher data rate = better performance
+                    if 'sinr_weight' in self.reward_weights:
+                        curr_sinr = state.get('rs_sinr_db', -10)
+                        # Typical SINR range: -10 to 30 dB
+                        SINR_MIN = -10.0  # dB - Poor signal quality
+                        SINR_MAX = 30.0   # dB - Excellent signal quality
+                        sinr_normalized = (curr_sinr - SINR_MIN) / (SINR_MAX - SINR_MIN)
+                        sinr_normalized = np.clip(sinr_normalized, 0.0, 1.0)
+                        sinr_reward = sinr_normalized * self.reward_weights['sinr_weight']
+                        reward += sinr_reward
+
+                    # Component 3: Latency penalty (propagation delay)
+                    # Lower delay = better user experience
+                    if 'latency_weight' in self.reward_weights:
+                        curr_delay = state.get('propagation_delay_ms', 0)
+                        # Typical LEO delay range: 1-25 ms (distance 300-7500 km)
+                        DELAY_MIN = 1.0   # ms - Close satellite
+                        DELAY_MAX = 25.0  # ms - Far satellite
+                        delay_normalized = (curr_delay - DELAY_MIN) / (DELAY_MAX - DELAY_MIN)
+                        delay_normalized = np.clip(delay_normalized, 0.0, 1.0)
+                        # Negative weight means penalty for high delay
+                        latency_penalty = delay_normalized * self.reward_weights['latency_weight']
+                        reward += latency_penalty
                 else:
                     # No valid state - small penalty
                     reward -= 0.1
@@ -462,15 +511,22 @@ class SatelliteHandoverEnv(gym.Env):
                 # Satellite not in visible list - penalty
                 reward -= 0.1
         else:
-            # No current satellite - large penalty
-            reward -= 1.0
+            # No current satellite - penalty depends on severity
+            if len(self.current_visible_satellites) == 0:
+                # CRITICAL: No satellites visible at all - very large penalty
+                # This encourages agent to learn handover policies that maintain connectivity
+                reward -= 10.0
+            else:
+                # Current satellite lost but others visible - moderate penalty
+                # Agent should have performed handover earlier
+                reward -= 5.0
 
-        # Component 2: Handover penalty
+        # Component 4: Handover penalty
         # Penalize handovers to encourage stability
         if handover_occurred:
             reward += self.reward_weights['handover_penalty']
 
-        # Component 3: Ping-pong penalty
+        # Component 5: Ping-pong penalty
         # Penalize switching back to recent satellite
         if handover_occurred and len(self.handover_history) >= 3:
             # Check if we're ping-ponging (returning to a recent satellite)
@@ -489,21 +545,60 @@ class SatelliteHandoverEnv(gym.Env):
         Returns:
             terminated: True if episode naturally ended
             truncated: True if episode hit time limit
+
+        IMPORTANT: Episodes now ALWAYS run to full duration (episode_duration_minutes).
+        No early termination even when satellites are lost.
+        This ensures:
+        - Consistent episode length for training (1140 steps @ 95 min, 5s/step)
+        - Sufficient training steps for RL convergence (1700 ep × 1140 = 1.94M steps)
+        - Agent learns to handle temporary satellite loss gracefully
         """
-        # Time limit reached
+        # Time limit reached - ONLY termination condition
         episode_duration = timedelta(minutes=self.episode_duration_minutes)
         if self.current_time >= self.episode_start + episode_duration:
             return False, True  # Not terminated, but truncated
 
-        # No satellites visible
-        if len(self.current_visible_satellites) == 0:
-            return True, False  # Terminated (no connectivity)
+        # REMOVED: Early termination on satellite loss
+        # Old behavior:
+        # - Terminated when no satellites visible
+        # - Terminated when current satellite lost
+        # Problem: Episodes averaged only 58/1140 steps (5.1% of max duration)
+        # Result: Insufficient training (99K vs 1.94M steps needed)
+        #
+        # New behavior:
+        # - Continue episode even with zero satellites
+        # - Agent receives large negative reward (handled in _calculate_reward)
+        # - Agent learns to avoid satellite loss through better handover policy
 
-        # Current satellite not in visible list
-        if self.current_satellite not in self.current_visible_satellites:
-            return True, False  # Terminated (lost current satellite)
+        return False, False  # Continue until time limit
 
-        return False, False  # Continue
+    def _get_action_mask(self) -> np.ndarray:
+        """
+        Generate action mask for valid actions
+
+        Action mask is a boolean array where:
+        - mask[i] = True if action i is valid
+        - mask[i] = False if action i is invalid
+
+        Action space: Discrete(K+1)
+        - Action 0: Stay with current satellite (always valid)
+        - Action 1 to N: Switch to visible satellite[i-1] (valid if i <= num_visible)
+        - Action N+1 to K: Invalid (no satellite at this index)
+
+        Returns:
+            action_mask: Boolean array of shape (action_space.n,)
+        """
+        action_mask = np.zeros(self.action_space.n, dtype=bool)
+
+        # Action 0 (stay) is always valid
+        action_mask[0] = True
+
+        # Actions 1 to num_visible are valid (switch to visible satellites)
+        num_visible = len(self.current_visible_satellites)
+        if num_visible > 0:
+            action_mask[1:num_visible+1] = True
+
+        return action_mask
 
     def render(self):
         """Render environment state (optional)"""

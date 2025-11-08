@@ -38,13 +38,19 @@ from .dqn_network import DQNNetwork, DuelingDQNNetwork
 from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
 
 # Agents (refactored)
-from .dqn import DQNAgent
+from .dqn import DQNAgent, DoubleDQNAgent
+
+# Baseline agents
+from .baseline import RSRPBaselineAgent
 
 __all__ = [
     # Base
     'BaseAgent',
     # Agents
     'DQNAgent',
+    'DoubleDQNAgent',
+    # Baselines
+    'RSRPBaselineAgent',
     # Utilities
     'DQNNetwork',
     'DuelingDQNNetwork',

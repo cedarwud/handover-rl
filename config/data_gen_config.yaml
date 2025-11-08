@@ -106,6 +106,44 @@ data_generation:
     max_memory_gb: null  # null = no limit
     enable_streaming: false  # Stream to disk if memory limited
 
+# Environment Configuration (for RL training)
+# ✅ Multi-objective reward function (aligned with 2024 literature)
+# Reference: MPNN-DQN (2024) uses service_time, delay, data_rate
+# Goal: Provide strong baseline for algorithm comparison
+environment:
+  time_step_seconds: 5
+  episode_duration_minutes: 95
+  max_visible_satellites: 10
+  reward:
+    # QoS reward (RSRP-based)
+    qos_weight: 1.0
+
+    # Signal quality reward (SINR-based for data rate estimation)
+    sinr_weight: 0.3
+
+    # Latency penalty (propagation delay)
+    latency_weight: -0.2
+
+    # Handover and ping-pong penalties
+    handover_penalty: -0.5
+    ping_pong_penalty: -1.0
+
+# Agent Configuration (DQN hyperparameters)
+# ✅ Ultra-Stabilized for Level 3+ (addresses Level 2 loss explosion)
+# Analysis: Level 2 showed 3.18x loss increase (871K → 2.77M) with 3 explosions
+# Fix: Further reduce LR and target update frequency for stable long-term training
+agent:
+  learning_rate: 2.0e-5        # Further reduced from 5e-5 (2.5x slower, prevents Q-overestimation)
+  gamma: 0.99
+  batch_size: 64
+  buffer_capacity: 10000
+  target_update_freq: 1000     # Doubled from 500 (more stable target network)
+  hidden_dim: 128
+  epsilon_start: 1.0
+  epsilon_end: 0.05
+  epsilon_decay: 0.995
+  gradient_clip_norm: 1.0      # Kept strict (already at 1.0)
+
 # Ground Station Configuration
 # ✅ Based on actual orbit-engine configuration
 ground_station:

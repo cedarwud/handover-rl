@@ -1,0 +1,117 @@
+{
+  "timestamp": "2025-10-28T14:29:18.336398",
+  "config": {
+    "model_path": "output/dqn_level1/checkpoints/best_model.pth",
+    "algorithm": "dqn",
+    "num_episodes": 10,
+    "seed": 42,
+    "num_satellites": 97
+  },
+  "dqn_metrics": {
+    "agent_name": "DQN Agent",
+    "num_episodes": 10,
+    "mean_reward": -0.89,
+    "std_reward": 0.6624952830020755,
+    "min_reward": -2.5000000000000004,
+    "max_reward": -0.1,
+    "mean_handovers": 1.5,
+    "std_handovers": 4.177319714841085,
+    "mean_ping_pongs": 0.5,
+    "mean_avg_rsrp": -62.07152557373047,
+    "mean_episode_length": 56.1,
+    "episode_rewards": [
+      -2.5000000000000004,
+      -0.2,
+      -1.0,
+      -1.0,
+      -1.0,
+      -1.0,
+      -0.1,
+      -1.0,
+      -1.0,
+      -0.1
+    ],
+    "episode_handovers": [
+      14,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "episode_ping_pongs": [
+      5,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "baseline_metrics": {
+    "agent_name": "RSRP Baseline",
+    "num_episodes": 10,
+    "mean_reward": -0.8,
+    "std_reward": 0.2792848008753788,
+    "min_reward": -1.0,
+    "max_reward": -0.2,
+    "mean_handovers": 1.0,
+    "std_handovers": 1.5491933384829668,
+    "mean_ping_pongs": 0.3,
+    "mean_avg_rsrp": -61.59480667114258,
+    "mean_episode_length": 22.4,
+    "episode_rewards": [
+      -0.2,
+      -0.8,
+      -1.0,
+      -1.0,
+      -1.0,
+      -1.0,
+      -0.5,
+      -1.0,
+      -1.0,
+      -0.5
+    ],
+    "episode_handovers": [
+      1,
+      5,
+      0,
+      0,
+      0,
+      0,
+      2,
+      0,
+      0,
+      2
+    ],
+    "episode_ping_pongs": [
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1
+    ]
+  },
+  "comparison": {
+    "reward_improvement_percent": -11.249999999999996,
+    "handover_reduction_percent": -50.0,
+    "ping_pong_reduction_percent": -66.66666666666667,
+    "dqn_mean_reward": -0.89,
+    "baseline_mean_reward": -0.8,
+    "dqn_mean_handovers": 1.5,
+    "baseline_mean_handovers": 1.0
+  }
+}

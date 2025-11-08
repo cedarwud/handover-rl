@@ -150,6 +150,11 @@ class DQNAgent(BaseAgent):
         self.epsilon_decay = agent_config.get('epsilon_decay', 0.995)
         self.epsilon = self.epsilon_start
 
+        # Training stability parameters
+        self.gradient_clip_norm = agent_config.get('gradient_clip_norm', 10.0)
+        self.q_value_clip = agent_config.get('q_value_clip', 100.0)  # Clip Q-values to prevent explosion
+        self.enable_nan_check = agent_config.get('enable_nan_check', True)  # Enable NaN/Inf detection
+
         # Device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -173,8 +178,8 @@ class DQNAgent(BaseAgent):
         # Optimizer
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=self.learning_rate)
 
-        # Loss function
-        self.criterion = nn.MSELoss()
+        # Loss function - Use Huber Loss (SmoothL1Loss) for better robustness to outliers
+        self.criterion = nn.SmoothL1Loss()  # More robust than MSE for outliers
 
         # Replay buffer (import here to avoid circular dependency)
         from ..replay_buffer import ReplayBuffer
@@ -193,30 +198,50 @@ class DQNAgent(BaseAgent):
         logger.info(f"  Batch size: {self.batch_size}")
         logger.info(f"  Buffer capacity: {self.buffer_capacity}")
 
-    def select_action(self, state: np.ndarray, deterministic: bool = False) -> int:
+    def select_action(self, state: np.ndarray, deterministic: bool = False, action_mask: Optional[np.ndarray] = None) -> int:
         """
-        Select action using ε-greedy policy
+        Select action using ε-greedy policy with action masking
 
         Args:
             state: (K, 12) observation
             deterministic: If True, use greedy policy (no exploration)
                           If False, use ε-greedy policy
+            action_mask: Optional boolean array of shape (n_actions,)
+                        If provided, only actions where mask[i]=True are valid
 
         Returns:
             action: Integer action index
         """
         import random
 
+        # If no action mask provided, all actions are valid
+        if action_mask is None:
+            action_mask = np.ones(self.n_actions, dtype=bool)
+
+        # Get valid actions (indices where mask is True)
+        valid_actions = np.where(action_mask)[0]
+
+        if len(valid_actions) == 0:
+            # No valid actions - this shouldn't happen, but fallback to action 0 (stay)
+            logger.warning("No valid actions in action mask! Defaulting to action 0.")
+            return 0
+
         # ε-greedy exploration
         if not deterministic and random.random() < self.epsilon:
-            # Explore: random action
-            action = random.randrange(self.n_actions)
+            # Explore: random action from valid actions only
+            action = random.choice(valid_actions)
         else:
-            # Exploit: greedy action based on Q-values
+            # Exploit: greedy action based on Q-values, masked to valid actions
             with torch.no_grad():
                 state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-                q_values = self.q_network(state_tensor)
-                action = q_values.argmax(dim=1).item()
+                q_values = self.q_network(state_tensor).squeeze(0)  # (n_actions,)
+
+                # Mask invalid actions by setting their Q-values to -inf
+                q_values_masked = q_values.cpu().numpy()
+                q_values_masked[~action_mask] = -np.inf
+
+                # Select action with highest Q-value among valid actions
+                action = int(np.argmax(q_values_masked))
 
         return action
 
@@ -264,26 +289,76 @@ class DQNAgent(BaseAgent):
         next_states = torch.FloatTensor(next_states).to(self.device)
         dones = torch.FloatTensor(dones).to(self.device)
 
+        # ====== NUMERICAL STABILITY CHECK 1: Input Data ======
+        if self.enable_nan_check:
+            # Check for NaN/Inf in input data
+            if torch.isnan(states).any() or torch.isinf(states).any():
+                logger.error(f"[NaN/Inf Detection] NaN or Inf detected in states at step {self.training_steps}")
+                logger.error(f"  States min: {states.min().item()}, max: {states.max().item()}")
+                return None
+
+            if torch.isnan(rewards).any() or torch.isinf(rewards).any():
+                logger.error(f"[NaN/Inf Detection] NaN or Inf detected in rewards at step {self.training_steps}")
+                logger.error(f"  Rewards min: {rewards.min().item()}, max: {rewards.max().item()}")
+                return None
+
         # Current Q-values: Q(s, a)
         current_q_values = self.q_network(states)
         current_q_values = current_q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
+
+        # ====== NUMERICAL STABILITY CHECK 2: Q-values ======
+        if self.enable_nan_check:
+            if torch.isnan(current_q_values).any() or torch.isinf(current_q_values).any():
+                logger.error(f"[NaN/Inf Detection] NaN or Inf detected in current Q-values at step {self.training_steps}")
+                logger.error(f"  Q-values min: {current_q_values.min().item()}, max: {current_q_values.max().item()}")
+                return None
+
+        # Clip Q-values to prevent explosion
+        current_q_values = torch.clamp(current_q_values, -self.q_value_clip, self.q_value_clip)
 
         # Next Q-values: max_a' Q_target(s', a')
         with torch.no_grad():
             next_q_values = self.target_network(next_states)
             max_next_q_values = next_q_values.max(dim=1)[0]
 
+            # ====== NUMERICAL STABILITY CHECK 3: Target Q-values ======
+            if self.enable_nan_check:
+                if torch.isnan(max_next_q_values).any() or torch.isinf(max_next_q_values).any():
+                    logger.error(f"[NaN/Inf Detection] NaN or Inf detected in target Q-values at step {self.training_steps}")
+                    logger.error(f"  Target Q min: {max_next_q_values.min().item()}, max: {max_next_q_values.max().item()}")
+                    return None
+
+            # Clip target Q-values
+            max_next_q_values = torch.clamp(max_next_q_values, -self.q_value_clip, self.q_value_clip)
+
             # Target Q-values: r + γ * max_a' Q_target(s', a')
             target_q_values = rewards + self.gamma * max_next_q_values * (1 - dones)
 
+            # Clip final target to prevent explosion
+            target_q_values = torch.clamp(target_q_values, -self.q_value_clip, self.q_value_clip)
+
         # Compute loss
         loss = self.criterion(current_q_values, target_q_values)
+
+        # ====== NUMERICAL STABILITY CHECK 4: Loss ======
+        if self.enable_nan_check:
+            if torch.isnan(loss) or torch.isinf(loss):
+                logger.error(f"[NaN/Inf Detection] NaN or Inf detected in loss at step {self.training_steps}")
+                logger.error(f"  Loss value: {loss.item()}")
+                return None
+
+            # Warn if loss is abnormally large (but not infinite)
+            if loss.item() > 1e6:
+                logger.warning(f"[Large Loss Warning] Abnormally large loss detected: {loss.item():.2e} at step {self.training_steps}")
+                logger.warning(f"  Current Q range: [{current_q_values.min().item():.2f}, {current_q_values.max().item():.2f}]")
+                logger.warning(f"  Target Q range: [{target_q_values.min().item():.2f}, {target_q_values.max().item():.2f}]")
+                logger.warning(f"  Rewards range: [{rewards.min().item():.2f}, {rewards.max().item():.2f}]")
 
         # Optimize
         self.optimizer.zero_grad()
         loss.backward()
         # Gradient clipping for stability
-        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=10.0)
+        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=self.gradient_clip_norm)
         self.optimizer.step()
 
         # Update target network periodically

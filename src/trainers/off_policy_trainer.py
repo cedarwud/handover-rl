@@ -25,6 +25,7 @@ import logging
 from typing import Dict, Any, Optional
 import numpy as np
 import gymnasium as gym
+from gymnasium.vector import VectorEnv
 
 from agents.base_agent import BaseAgent
 
@@ -141,7 +142,9 @@ class OffPolicyTrainer:
         # Episode loop
         while not done:
             # 1. Agent selects action (training mode = exploration)
-            action = self.agent.select_action(obs, deterministic=False)
+            # Use action mask from info if available
+            action_mask = info.get('action_mask', None)
+            action = self.agent.select_action(obs, deterministic=False, action_mask=action_mask)
 
             # 2. Environment executes action
             next_obs, reward, terminated, truncated, info = self.env.step(action)
@@ -210,8 +213,146 @@ class OffPolicyTrainer:
             'update_ratio': update_ratio,
         }
 
+    def train_episode_vectorized(
+        self,
+        episode_idx: int,
+        episode_start_time: Optional[Any] = None,
+        seed: Optional[int] = None
+    ) -> Dict[str, float]:
+        """
+        Train for one episode using vectorized environments
+
+        This method handles multiple environments running in parallel.
+        Episodes are collected from all environments simultaneously.
+
+        Args:
+            episode_idx: Episode index (for logging and seed)
+            episode_start_time: Optional start time for environment reset
+            seed: Random seed for this episode
+
+        Returns:
+            metrics: Aggregated metrics from all parallel environments
+        """
+        num_envs = self.env.num_envs
+
+        # Callback: Episode start
+        self.agent.on_episode_start()
+
+        # Reset all environments
+        reset_options = {}
+        if episode_start_time is not None:
+            reset_options['start_time'] = episode_start_time
+
+        if seed is not None:
+            # Each environment gets a different seed
+            seeds = [seed + i for i in range(num_envs)]
+            obs, infos = self.env.reset(seed=seeds, options=reset_options)
+        else:
+            obs, infos = self.env.reset(options=reset_options)
+
+        # Episode state (track for each environment)
+        episode_rewards = np.zeros(num_envs)
+        episode_steps = np.zeros(num_envs, dtype=int)
+        episode_losses = []
+        dones = np.zeros(num_envs, dtype=bool)
+
+        # Keep track of which environments are still running
+        active_envs = np.ones(num_envs, dtype=bool)
+
+        # Episode loop (continues until all environments are done)
+        while active_envs.any():
+            # 1. Agent selects actions for all active environments
+            # Note: obs is shape (num_envs, ...)
+            # Extract action masks from infos (if available)
+            if isinstance(infos, dict) and 'action_mask' in infos:
+                # Dict-style infos (Gymnasium vectorized envs)
+                action_masks = infos['action_mask']  # Shape: (num_envs, action_space.n)
+            else:
+                # List-style infos or no action_mask
+                action_masks = [None] * num_envs
+
+            actions = np.array([
+                self.agent.select_action(obs[i], deterministic=False, action_mask=action_masks[i])
+                if active_envs[i] else 0  # Dummy action for done envs
+                for i in range(num_envs)
+            ])
+
+            # 2. All environments execute actions
+            next_obs, rewards, terminateds, truncateds, infos = self.env.step(actions)
+            dones = np.logical_or(terminateds, truncateds)
+
+            # 3. Store experiences from all environments
+            for i in range(num_envs):
+                if active_envs[i]:  # Only store from active environments
+                    if hasattr(self.agent, 'store_experience'):
+                        self.agent.store_experience(
+                            obs[i], actions[i], rewards[i], next_obs[i], dones[i]
+                        )
+
+                    # Update metrics for this environment
+                    episode_rewards[i] += rewards[i]
+                    episode_steps[i] += 1
+                    self.total_steps += 1
+
+                    # Mark environment as done if finished
+                    if dones[i]:
+                        active_envs[i] = False
+
+            # 4. Per-step update (can update after any environment step)
+            if self.total_steps % self.update_frequency == 0:
+                loss = self.agent.update()
+                if loss is not None:
+                    episode_losses.append(loss)
+                    self.total_updates += 1
+
+            obs = next_obs
+
+        # All environments finished, aggregate metrics
+        # infos is a dict with keys that map to arrays (one value per env)
+        # We need to aggregate these metrics across all environments
+
+        # Extract metrics from all environments and compute means
+        if isinstance(infos, dict):
+            # Dict-style infos (Gymnasium vectorized envs)
+            num_handovers_array = infos.get('num_handovers', np.zeros(num_envs))
+            avg_rsrp_array = infos.get('avg_rsrp', np.zeros(num_envs))
+            num_ping_pongs_array = infos.get('num_ping_pongs', np.zeros(num_envs))
+
+            # Aggregate across environments
+            avg_handovers = float(np.mean(num_handovers_array)) if isinstance(num_handovers_array, np.ndarray) else float(num_handovers_array)
+            avg_rsrp = float(np.mean(avg_rsrp_array)) if isinstance(avg_rsrp_array, np.ndarray) else float(avg_rsrp_array)
+            avg_ping_pongs = float(np.mean(num_ping_pongs_array)) if isinstance(num_ping_pongs_array, np.ndarray) else float(num_ping_pongs_array)
+        else:
+            # List-style infos (one dict per environment)
+            avg_handovers = float(np.mean([info.get('num_handovers', 0) for info in infos]))
+            avg_rsrp = float(np.mean([info.get('avg_rsrp', 0) for info in infos]))
+            avg_ping_pongs = float(np.mean([info.get('num_ping_pongs', 0) for info in infos]))
+
+        episode_info = {
+            'num_handovers': avg_handovers,
+            'avg_rsrp': avg_rsrp,
+            'num_ping_pongs': avg_ping_pongs,
+        }
+        self.agent.on_episode_end(float(np.mean(episode_rewards)), episode_info)
+
+        # Compile aggregated metrics
+        avg_loss = np.mean(episode_losses) if episode_losses else 0.0
+
+        metrics = {
+            'reward': float(np.mean(episode_rewards)),  # Average across environments
+            'length': int(np.mean(episode_steps)),
+            'loss': float(avg_loss),
+            'handovers': avg_handovers,
+            'avg_rsrp': avg_rsrp,
+            'ping_pongs': avg_ping_pongs,
+            'num_updates': len(episode_losses),
+        }
+
+        return metrics
+
     def __repr__(self) -> str:
         """String representation"""
-        return (f"OffPolicyTrainer(env={self.env.spec.id if self.env.spec else 'Unknown'}, "
+        env_name = 'Vectorized' if isinstance(self.env, VectorEnv) else (self.env.spec.id if self.env.spec else 'Unknown')
+        return (f"OffPolicyTrainer(env={env_name}, "
                 f"agent={self.agent.__class__.__name__}, "
                 f"steps={self.total_steps}, updates={self.total_updates})")

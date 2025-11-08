@@ -20,8 +20,10 @@ Usage:
 """
 
 from .dqn_agent import DQNAgent, QNetwork
+from .double_dqn_agent import DoubleDQNAgent
 
 __all__ = [
     'DQNAgent',
+    'DoubleDQNAgent',
     'QNetwork',
 ]
