@@ -44,7 +44,7 @@ import json
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 # Import framework components
-from adapters.orbit_engine_adapter import OrbitEngineAdapter
+from adapters import AdapterWrapper  # NEW v3.0: Unified adapter
 from environments.satellite_handover_env import SatelliteHandoverEnv
 from agents import DQNAgent, RSRPBaselineAgent
 from utils.satellite_utils import load_stage4_optimized_satellites
@@ -405,8 +405,8 @@ def main():
         }
 
     # Initialize adapter
-    logger.info("\nInitializing OrbitEngineAdapter...")
-    adapter = OrbitEngineAdapter(config)
+    logger.info("\nInitializing Orbit Adapter...")
+    adapter = AdapterWrapper(config)  # Auto-selects precompute or real-time
 
     # Load satellite pool
     logger.info("Loading satellite pool from orbit-engine Stage 4...")

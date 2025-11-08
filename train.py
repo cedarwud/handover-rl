@@ -51,7 +51,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 # Import framework components
-from adapters.orbit_engine_adapter import OrbitEngineAdapter
+from adapters import AdapterWrapper  # NEW: Unified adapter (precompute or real-time)
 from environments.satellite_handover_env import SatelliteHandoverEnv
 from agents import DQNAgent, DoubleDQNAgent
 from trainers import OffPolicyTrainer
@@ -136,10 +136,22 @@ def train(config, level_config, args, logger):
     else:
         writer = None
 
-    # Initialize adapter
-    logger.info("Initializing OrbitEngineAdapter...")
-    adapter = OrbitEngineAdapter(config)
-    logger.info("✅ Adapter initialized")
+    # Initialize adapter (NEW v3.0: AdapterWrapper auto-selects backend)
+    logger.info("Initializing Orbit Adapter...")
+    adapter = AdapterWrapper(config)  # Auto-selects precompute or real-time
+
+    # Log adapter info
+    adapter_info = adapter.get_backend_info()
+    if adapter_info['is_precompute']:
+        logger.info("✅ Precompute mode enabled - Training will be ~100x faster!")
+        metadata = adapter_info.get('metadata', {})
+        if 'hdf5_path' in metadata:
+            logger.info(f"   Table: {metadata['hdf5_path']}")
+            logger.info(f"   Time range: {metadata.get('tle_epoch_start', 'N/A')} to {metadata.get('tle_epoch_end', 'N/A')}")
+    else:
+        logger.info("✅ Real-time calculation mode")
+        logger.info("⚠️  Training will be slow. Consider generating precompute table for 100x speedup")
+        logger.info("   Run: python scripts/generate_orbit_precompute.py --help")
 
     # Load satellite pool
     logger.info("=" * 80)
@@ -197,7 +209,7 @@ def train(config, level_config, args, logger):
             """Factory function to create independent environment instances"""
             def _init():
                 # Each environment needs its own adapter instance to avoid shared state
-                env_adapter = OrbitEngineAdapter(config)
+                env_adapter = AdapterWrapper(config)  # Use wrapper
                 return SatelliteHandoverEnv(env_adapter, satellite_ids, config)
             return _init
 

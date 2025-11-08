@@ -12,7 +12,17 @@ Classes:
 
 from .orbit_engine_adapter import OrbitEngineAdapter
 from .tle_loader import TLELoader, TLE
+from .orbit_precompute_generator import OrbitPrecomputeGenerator
+from .orbit_precompute_table import OrbitPrecomputeTable
+from .adapter_wrapper import AdapterWrapper
 
-__all__ = ['OrbitEngineAdapter', 'TLELoader', 'TLE']
+__all__ = [
+    'OrbitEngineAdapter',
+    'TLELoader',
+    'TLE',
+    'OrbitPrecomputeGenerator',
+    'OrbitPrecomputeTable',
+    'AdapterWrapper',
+]
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"  # Precompute system added
