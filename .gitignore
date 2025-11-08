@@ -41,6 +41,7 @@ output/
 data/episodes/
 data/*.json
 data/*.npz
+data/*.h5
 !data/.gitkeep
 
 # Results & Logs
