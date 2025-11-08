@@ -85,6 +85,8 @@ class OrbitPrecomputeGenerator:
         logger.info(f"OrbitPrecomputeGenerator initialized")
         logger.info(f"  Satellites: {len(satellite_ids)}")
         logger.info(f"  Adapter: {type(adapter).__name__}")
+        logger.info(f"  ⚠️  Note: Parallel mode requires OrbitEngineAdapter serialization")
+        logger.info(f"     If parallel fails, will automatically fall back to serial mode")
 
     def generate(self,
                  start_time: datetime,
@@ -284,39 +286,75 @@ class OrbitPrecomputeGenerator:
                                  output_path: str,
                                  timestamps: List[datetime],
                                  num_processes: int):
-        """Compute states in parallel using multiprocessing."""
-        logger.info(f"Computing states (parallel mode, {num_processes} processes)...")
+        """
+        Compute states in parallel using multiprocessing.
 
-        # Create worker function
-        def compute_satellite_states(sat_id):
-            """Worker function to compute all states for one satellite."""
-            states_array = np.zeros((len(timestamps), len(self.STATE_FIELDS)), dtype=np.float32)
+        ⚠️ WARNING: Multiprocessing with OrbitEngineAdapter may fail due to:
+        - Complex object serialization issues
+        - Shared state problems
+        - orbit-engine internal state
 
-            for t_idx, timestamp in enumerate(timestamps):
-                try:
-                    state_dict = self.adapter.calculate_state(
-                        satellite_id=sat_id,
-                        timestamp=timestamp
-                    )
+        If parallel fails, will automatically fall back to serial mode.
+        """
+        logger.info(f"Attempting parallel computation ({num_processes} processes)...")
+        logger.warning("⚠️  Parallel mode may fail with OrbitEngineAdapter")
+        logger.warning("   Will automatically fall back to serial mode if it fails")
 
-                    for field_idx, field in enumerate(self.STATE_FIELDS):
-                        states_array[t_idx, field_idx] = state_dict.get(field, np.nan)
+        try:
+            # Create worker function that recreates adapter in each process
+            def compute_satellite_states(args):
+                """Worker function - recreates adapter to avoid serialization issues."""
+                sat_id, config, timestamps_list = args
 
-                except Exception as e:
-                    logger.debug(f"Error computing {sat_id} at {timestamp}: {e}")
-                    states_array[t_idx, :] = np.nan
+                # Import here to avoid circular imports
+                from adapters import OrbitEngineAdapter
 
-            return sat_id, states_array
+                # Each worker creates its own adapter instance
+                # This avoids multiprocessing serialization issues
+                worker_adapter = OrbitEngineAdapter(config)
 
-        # Use multiprocessing pool
-        with mp.Pool(num_processes) as pool:
-            # Progress bar
-            results = list(tqdm(
-                pool.imap(compute_satellite_states, self.satellite_ids),
-                total=len(self.satellite_ids),
-                desc="Satellites",
-                unit="sat"
-            ))
+                states_array = np.zeros((len(timestamps_list), len(self.STATE_FIELDS)), dtype=np.float32)
+
+                for t_idx, timestamp in enumerate(timestamps_list):
+                    try:
+                        state_dict = worker_adapter.calculate_state(
+                            satellite_id=sat_id,
+                            timestamp=timestamp
+                        )
+
+                        for field_idx, field in enumerate(self.STATE_FIELDS):
+                            states_array[t_idx, field_idx] = state_dict.get(field, np.nan)
+
+                    except Exception as e:
+                        # Fill with NaN on error
+                        states_array[t_idx, :] = np.nan
+
+                return sat_id, states_array
+
+            # Prepare arguments for each worker
+            worker_args = [
+                (sat_id, self.config, timestamps)
+                for sat_id in self.satellite_ids
+            ]
+
+            # Use multiprocessing pool
+            with mp.Pool(num_processes) as pool:
+                # Progress bar
+                results = list(tqdm(
+                    pool.imap(compute_satellite_states, worker_args),
+                    total=len(self.satellite_ids),
+                    desc="Satellites",
+                    unit="sat"
+                ))
+
+            logger.info("✅ Parallel computation succeeded")
+
+        except Exception as e:
+            logger.error(f"❌ Parallel computation failed: {e}")
+            logger.warning("Falling back to serial mode...")
+            # Fall back to serial computation
+            self._compute_states_serial(output_path, timestamps)
+            return
 
         # Write results to HDF5
         logger.info("Writing results to HDF5...")
