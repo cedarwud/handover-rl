@@ -79,7 +79,8 @@ class OrbitPrecomputeTable:
         self.h5file = None  # Will be opened on demand
 
         # Load metadata
-        with h5py.File(hdf5_path, 'r') as f:
+        # Use optimized HDF5 settings (512 MB cache to prevent I/O bottleneck)
+        with h5py.File(hdf5_path, 'r', rdcc_nbytes=512*1024*1024, rdcc_nslots=10007, rdcc_w0=0.75) as f:
             meta = f['metadata']
             self.generation_time = meta.attrs['generation_time']
             self.tle_epoch_start = datetime.fromisoformat(meta.attrs['tle_epoch_start'])
@@ -228,7 +229,17 @@ class OrbitPrecomputeTable:
         """
         # Open HDF5 file on demand (lazy loading)
         if self.h5file is None:
-            self.h5file = h5py.File(self.hdf5_path, 'r')
+            # Optimize HDF5 read performance with larger chunk cache
+            # rdcc_nbytes: 512 MB cache (default: 1 MB) - prevents disk I/O bottleneck
+            # rdcc_nslots: 10007 slots (prime number for hash table)
+            # rdcc_w0: 0.75 preemption policy (balance between speed and memory)
+            self.h5file = h5py.File(
+                self.hdf5_path,
+                'r',
+                rdcc_nbytes=512*1024*1024,  # 512 MB chunk cache
+                rdcc_nslots=10007,           # Hash table slots
+                rdcc_w0=0.75                 # Preemption policy
+            )
 
         states_group = self.h5file['states']
         sat_group = states_group[satellite_id]

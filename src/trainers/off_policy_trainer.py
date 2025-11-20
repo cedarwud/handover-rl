@@ -26,10 +26,24 @@ from typing import Dict, Any, Optional
 import numpy as np
 import gymnasium as gym
 from gymnasium.vector import VectorEnv
+import psutil
+import signal
+import time
+from functools import wraps
 
 from agents.base_agent import BaseAgent
 
 logger = logging.getLogger(__name__)
+
+
+class EpisodeTimeoutError(Exception):
+    """Raised when episode exceeds time limit"""
+    pass
+
+
+class EpisodeResourceError(Exception):
+    """Raised when episode causes resource exhaustion"""
+    pass
 
 
 class OffPolicyTrainer:
@@ -80,45 +94,61 @@ class OffPolicyTrainer:
         self.total_steps = 0
         self.total_updates = 0
 
+        # Episode safety settings (resource monitoring and timeout protection)
+        training_config = config.get('training', {})
+        self.episode_timeout_seconds = training_config.get('episode_timeout_seconds', 600)  # 10 minutes default
+        self.max_memory_percent = training_config.get('max_memory_percent', 90)  # 90% RAM
+        self.max_cpu_percent = training_config.get('max_cpu_percent', 95)  # 95% CPU
+        self.enable_safety_checks = training_config.get('enable_safety_checks', True)
+        self.resource_check_interval = training_config.get('resource_check_interval', 10)  # Check every 10 steps
+
         logger.info("OffPolicyTrainer initialized")
         logger.info(f"  Min buffer size: {self.min_buffer_size}")
         logger.info(f"  Batch size: {self.batch_size}")
         logger.info(f"  Update frequency: {self.update_frequency}")
+        if self.enable_safety_checks:
+            logger.info(f"  Episode timeout: {self.episode_timeout_seconds}s")
+            logger.info(f"  Max memory: {self.max_memory_percent}%")
+            logger.info(f"  Max CPU: {self.max_cpu_percent}%")
 
-    def train_episode(
+    def _check_resources(self) -> None:
+        """
+        Check system resources and raise error if limits exceeded
+
+        Raises:
+            EpisodeResourceError: If memory or CPU usage exceeds limits
+        """
+        if not self.enable_safety_checks:
+            return
+
+        # Check memory (use available memory, not percent which includes cache)
+        memory = psutil.virtual_memory()
+        # Calculate actual usage excluding cache: used = total - available
+        actual_used_percent = (memory.total - memory.available) / memory.total * 100
+        if actual_used_percent > self.max_memory_percent:
+            raise EpisodeResourceError(
+                f"Memory usage {actual_used_percent:.1f}% exceeds limit {self.max_memory_percent}% "
+                f"(available: {memory.available / 1024**3:.1f} GB / {memory.total / 1024**3:.1f} GB)"
+            )
+
+        # Check CPU (average over 1 second)
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        if cpu_percent > self.max_cpu_percent:
+            raise EpisodeResourceError(
+                f"CPU usage {cpu_percent:.1f}% exceeds limit {self.max_cpu_percent}%"
+            )
+
+    def _safe_train_episode(
         self,
         episode_idx: int,
         episode_start_time: Optional[Any] = None,
         seed: Optional[int] = None
     ) -> Dict[str, float]:
         """
-        Train for one episode
+        Train episode with timeout and resource protection
 
-        Args:
-            episode_idx: Episode index (for logging and seed)
-            episode_start_time: Optional start time for environment reset
-            seed: Random seed for this episode
-
-        Returns:
-            metrics: Dictionary containing:
-                - reward: Total episode reward
-                - length: Episode length (number of steps)
-                - loss: Average training loss
-                - handovers: Number of handovers
-                - avg_rsrp: Average RSRP (dBm)
-                - ping_pongs: Number of ping-pong handovers
-                - num_updates: Number of training updates performed
-
-        Training Flow:
-            1. Reset environment
-            2. Agent callback: on_episode_start()
-            3. Episode loop:
-               - Agent selects action (with exploration)
-               - Environment step
-               - Store experience in replay buffer
-               - Per-step update (if buffer has enough data)
-            4. Agent callback: on_episode_end()
-            5. Return episode metrics
+        This is the actual training logic, wrapped by train_episode()
+        for safety protection.
         """
         # Callback: Episode start
         self.agent.on_episode_start()
@@ -139,8 +169,24 @@ class OffPolicyTrainer:
         episode_losses = []
         done = False
 
+        # Episode start time for timeout detection
+        episode_wall_start = time.time()
+
         # Episode loop
         while not done:
+            # Check timeout
+            if self.enable_safety_checks:
+                elapsed = time.time() - episode_wall_start
+                if elapsed > self.episode_timeout_seconds:
+                    raise EpisodeTimeoutError(
+                        f"Episode {episode_idx} exceeded timeout {self.episode_timeout_seconds}s "
+                        f"(actual: {elapsed:.1f}s, steps: {episode_steps})"
+                    )
+
+                # Check resources periodically
+                if episode_steps % self.resource_check_interval == 0:
+                    self._check_resources()
+
             # 1. Agent selects action (training mode = exploration)
             # Use action mask from info if available
             action_mask = info.get('action_mask', None)
@@ -151,49 +197,151 @@ class OffPolicyTrainer:
             done = terminated or truncated
 
             # 3. Store experience in agent's replay buffer
-            # Note: Agent is responsible for managing its own replay buffer
-            # This supports different buffer implementations (standard, prioritized, etc.)
             if hasattr(self.agent, 'store_experience'):
                 self.agent.store_experience(obs, action, reward, next_obs, done)
 
             # 4. Per-step update (off-policy characteristic)
-            # Check if we have enough experiences and it's time to update
             if self.total_steps % self.update_frequency == 0:
-                # Agent decides if it's ready to train (e.g., buffer size check)
                 loss = self.agent.update()
-
                 if loss is not None:
                     episode_losses.append(loss)
                     self.total_updates += 1
 
-            # Update metrics
+            # Move to next state
+            obs = next_obs
             episode_reward += reward
             episode_steps += 1
             self.total_steps += 1
-            obs = next_obs
 
         # Callback: Episode end
+        # Get episode statistics from environment
+        stats = info.get('episode_stats', {})
         episode_info = {
-            'num_handovers': info.get('num_handovers', 0),
-            'avg_rsrp': info.get('avg_rsrp', 0),
-            'num_ping_pongs': info.get('num_ping_pongs', 0),
+            'num_handovers': stats.get('num_handovers', 0),
+            'avg_rsrp': stats.get('avg_rsrp', 0.0),
+            'num_ping_pongs': stats.get('num_ping_pongs', 0),
         }
         self.agent.on_episode_end(episode_reward, episode_info)
 
-        # Compile episode metrics
-        avg_loss = np.mean(episode_losses) if episode_losses else 0.0
+        # MEMORY CLEANUP: Force garbage collection and PyTorch cache cleanup
+        import torch
+        import gc
 
-        metrics = {
-            'reward': float(episode_reward),
+        # Force garbage collection to release Python objects
+        gc.collect()
+
+        # Release CUDA cache if using GPU
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # Calculate metrics
+        avg_loss = np.mean(episode_losses) if len(episode_losses) > 0 else 0.0
+
+        return {
+            'reward': episode_reward,
             'length': episode_steps,
-            'loss': float(avg_loss),
-            'handovers': info.get('num_handovers', 0),
-            'avg_rsrp': info.get('avg_rsrp', 0),
-            'ping_pongs': info.get('num_ping_pongs', 0),
-            'num_updates': len(episode_losses),
+            'loss': avg_loss,
+            'handovers': stats.get('num_handovers', 0),
+            'avg_rsrp': stats.get('avg_rsrp', 0.0),
+            'ping_pongs': stats.get('num_ping_pongs', 0),
+            'num_updates': len(episode_losses)
         }
 
-        return metrics
+    def train_episode(
+        self,
+        episode_idx: int,
+        episode_start_time: Optional[Any] = None,
+        seed: Optional[int] = None
+    ) -> Dict[str, float]:
+        """
+        Train for one episode with safety protection (timeout, resource monitoring, exception handling)
+
+        Args:
+            episode_idx: Episode index (for logging and seed)
+            episode_start_time: Optional start time for environment reset
+            seed: Random seed for this episode
+
+        Returns:
+            metrics: Dictionary containing:
+                - reward: Total episode reward
+                - length: Episode length (number of steps)
+                - loss: Average training loss
+                - handovers: Number of handovers
+                - avg_rsrp: Average RSRP (dBm)
+                - ping_pongs: Number of ping-pong handovers
+                - num_updates: Number of training updates performed
+                - skipped: True if episode was skipped due to error
+                - error: Error message if episode failed
+
+        Safety Features:
+            - Timeout protection: Episodes exceeding time limit are auto-terminated
+            - Resource monitoring: CPU/RAM checks to prevent system exhaustion
+            - Exception handling: All errors caught and logged, training continues
+            - Auto-skip: Failed episodes are skipped with default metrics
+
+        Training Flow:
+            1. Try to run episode with _safe_train_episode()
+            2. Catch timeout, resource, and general exceptions
+            3. Log detailed error information
+            4. Return default metrics and continue training
+        """
+        try:
+            # Run episode with full safety protection
+            metrics = self._safe_train_episode(episode_idx, episode_start_time, seed)
+            metrics['skipped'] = False
+            metrics['error'] = None
+            return metrics
+
+        except EpisodeTimeoutError as e:
+            # Episode took too long - log and skip
+            logger.error(f"⏱️  Episode {episode_idx} TIMEOUT: {e}")
+            logger.error(f"   Episode will be skipped (1/{self.config['training']['num_episodes']} = "
+                        f"{100.0/self.config['training']['num_episodes']:.2f}% data loss)")
+            return {
+                'reward': 0.0,
+                'length': 0,
+                'loss': 0.0,
+                'handovers': 0,
+                'avg_rsrp': -140.0,
+                'ping_pongs': 0,
+                'num_updates': 0,
+                'skipped': True,
+                'error': f'TIMEOUT: {str(e)}'
+            }
+
+        except EpisodeResourceError as e:
+            # Resource exhaustion - log and skip
+            logger.error(f"💥 Episode {episode_idx} RESOURCE ERROR: {e}")
+            logger.error(f"   System resources exhausted - episode skipped")
+            return {
+                'reward': 0.0,
+                'length': 0,
+                'loss': 0.0,
+                'handovers': 0,
+                'avg_rsrp': -140.0,
+                'ping_pongs': 0,
+                'num_updates': 0,
+                'skipped': True,
+                'error': f'RESOURCE: {str(e)}'
+            }
+
+        except Exception as e:
+            # Any other error - log detailed traceback and skip
+            logger.error(f"❌ Episode {episode_idx} CRASHED: {type(e).__name__}: {e}")
+            import traceback
+            logger.error(f"   Traceback:\n{traceback.format_exc()}")
+            logger.error(f"   Episode will be skipped to continue training")
+            return {
+                'reward': 0.0,
+                'length': 0,
+                'loss': 0.0,
+                'handovers': 0,
+                'avg_rsrp': -140.0,
+                'ping_pongs': 0,
+                'num_updates': 0,
+                'skipped': True,
+                'error': f'EXCEPTION: {type(e).__name__}: {str(e)}'
+            }
 
     def get_statistics(self) -> Dict[str, Any]:
         """

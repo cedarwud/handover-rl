@@ -222,11 +222,11 @@ class OrbitPrecomputeGenerator:
                 ts.timestamp() for ts in timestamps
             ], dtype=np.float64)
 
+            # No compression for timestamps (small dataset, fast access needed)
             ts_group.create_dataset(
                 'utc_timestamps',
                 data=unix_timestamps,
-                compression='gzip',
-                compression_opts=4
+                compression=None
             )
 
             # States group (will be filled by computation)
@@ -237,13 +237,16 @@ class OrbitPrecomputeGenerator:
                 sat_group = states_group.create_group(sat_id)
 
                 for field in self.STATE_FIELDS:
+                    # Optimized for training: No compression + chunk aligned to episode
+                    # Episode = 20 min = 240 timesteps (at 5s intervals)
+                    # This eliminates cross-chunk reads and decompression overhead
                     sat_group.create_dataset(
                         field,
                         shape=(num_timesteps,),
                         dtype=np.float32,
-                        compression='gzip',
-                        compression_opts=4,
-                        fillvalue=np.nan  # Use NaN for missing/invalid states
+                        compression=None,  # No compression for maximum speed
+                        chunks=(240,),     # Align chunks to episode boundaries
+                        fillvalue=np.nan   # Use NaN for missing/invalid states
                     )
 
         logger.info(f"HDF5 structure created: {output_path}")

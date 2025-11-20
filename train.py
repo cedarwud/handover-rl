@@ -243,8 +243,25 @@ def train(config, level_config, args, logger):
     # Create trainer
     logger.info(f"Creating {algo_info['type']} trainer...")
     TrainerClass = algo_info['trainer_class']
+
+    # Merge level_config training settings into config
+    if 'training' not in config:
+        config['training'] = {}
+    config['training'].update({
+        'num_episodes': level_config['num_episodes'],
+        'episode_timeout_seconds': level_config.get('episode_timeout_seconds', 600),
+        'max_memory_percent': level_config.get('max_memory_percent', 90),
+        'max_cpu_percent': level_config.get('max_cpu_percent', 95),
+        'enable_safety_checks': level_config.get('enable_safety_checks', True),
+        'resource_check_interval': level_config.get('resource_check_interval', 10),
+    })
+
     trainer = TrainerClass(env, agent, config)
     logger.info("✅ Trainer created")
+    if config['training']['enable_safety_checks']:
+        logger.info(f"   Safety checks enabled: timeout={config['training']['episode_timeout_seconds']}s, "
+                   f"max_memory={config['training']['max_memory_percent']}%, "
+                   f"max_cpu={config['training']['max_cpu_percent']}%")
 
     # Training metrics
     episode_rewards = []
@@ -252,10 +269,33 @@ def train(config, level_config, args, logger):
     episode_avg_rsrp = []
     best_reward = -np.inf
 
-    # Time configuration
-    start_time_base = datetime(2025, 7, 27, 0, 0, 0)
-    episode_duration_minutes = 95  # Starlink orbital period
+    # Time configuration - Auto-detect from TLE data
+    # Get TLE epoch range from adapter to use latest data
+    try:
+        epoch_range = env.unwrapped.adapter.tle_loader.get_epoch_range()
+        if epoch_range:
+            latest_epoch = epoch_range[1]
+            # Use latest epoch minus 29 days as start (for 30-day training window)
+            start_time_base = latest_epoch - timedelta(days=29)
+            logger.info(f"Auto-detected TLE range: {epoch_range[0].date()} to {epoch_range[1].date()}")
+            logger.info(f"Using start_time_base: {start_time_base}")
+        else:
+            # Fallback to default if detection fails
+            start_time_base = datetime(2025, 10, 10, 0, 0, 0)  # Updated to match 30-day table
+            logger.warning(f"Could not auto-detect TLE range, using fallback: {start_time_base}")
+    except Exception as e:
+        # Fallback on any error (matches 30-day precompute table range)
+        start_time_base = datetime(2025, 10, 10, 0, 0, 0)  # Updated to match 30-day table
+        logger.warning(f"Error detecting TLE range: {e}, using fallback: {start_time_base}")
+
+    # Read episode duration from config
+    env_config = config.get('environment', config.get('data_generation', {}))
+    episode_duration_minutes = env_config.get('episode_duration_minutes', 20)
     overlap_ratio = level_config['overlap']
+
+    logger.info(f"Episode settings from config:")
+    logger.info(f"  Duration: {episode_duration_minutes} minutes")
+    logger.info(f"  Overlap: {overlap_ratio * 100}%")
 
     # Calculate episode stride
     if overlap_ratio > 0:
@@ -264,11 +304,16 @@ def train(config, level_config, args, logger):
         episode_stride_minutes = episode_duration_minutes
 
     # Training loop
-    num_episodes = level_config['num_episodes']
+    # Support batch training: use --num-episodes to override level config
+    num_episodes = args.num_episodes if args.num_episodes is not None else level_config['num_episodes']
+    start_episode = args.start_episode
+
     logger.info(f"\n{'='*80}")
-    logger.info(f"Starting training: {num_episodes} episodes")
+    logger.info(f"Starting training: Episodes {start_episode} to {start_episode + num_episodes - 1}")
     logger.info(f"Algorithm: {args.algorithm.upper()}")
     logger.info(f"Training Level: {args.level} ({level_config['name']})")
+    if args.start_episode > 0:
+        logger.info(f"Batch Mode: Starting from episode {start_episode}")
     logger.info(f"{'='*80}\n")
 
     # Check if using vectorized environment
@@ -279,23 +324,39 @@ def train(config, level_config, args, logger):
         logger.info(f"Using vectorized training with {env.num_envs} environments")
 
     for episode in tqdm(range(num_episodes), desc="Training"):
+        # Actual episode index (for batch training)
+        actual_episode = start_episode + episode
+
         # Continuous time sampling with sliding window
-        time_offset_minutes = episode * episode_stride_minutes
+        time_offset_minutes = actual_episode * episode_stride_minutes
         episode_start_time = start_time_base + timedelta(minutes=time_offset_minutes)
 
         # Train one episode using appropriate method
         if is_vectorized:
             metrics = trainer.train_episode_vectorized(
-                episode_idx=episode,
+                episode_idx=actual_episode,
                 episode_start_time=episode_start_time,
-                seed=args.seed + episode
+                seed=args.seed + actual_episode
             )
         else:
             metrics = trainer.train_episode(
-                episode_idx=episode,
+                episode_idx=actual_episode,
                 episode_start_time=episode_start_time,
-                seed=args.seed + episode
+                seed=args.seed + actual_episode
             )
+
+        # Check if episode was skipped due to error
+        if metrics.get('skipped', False):
+            # Episode failed - log and continue
+            error_msg = metrics.get('error', 'Unknown error')
+            logger.warning(f"⚠️  Episode {actual_episode} skipped due to: {error_msg}")
+            # Still record metrics (all zeros) for continuity
+            if writer:
+                writer.add_scalar('Episode/Skipped', 1.0, actual_episode)
+        else:
+            # Successful episode
+            if writer:
+                writer.add_scalar('Episode/Skipped', 0.0, actual_episode)
 
         # Record metrics
         episode_rewards.append(metrics['reward'])
@@ -304,19 +365,19 @@ def train(config, level_config, args, logger):
 
         # Log to TensorBoard
         if writer:
-            writer.add_scalar('Episode/Reward', metrics['reward'], episode)
-            writer.add_scalar('Episode/Length', metrics['length'], episode)
-            writer.add_scalar('Episode/Handovers', metrics['handovers'], episode)
-            writer.add_scalar('Episode/AvgRSRP', metrics['avg_rsrp'], episode)
-            writer.add_scalar('Episode/PingPongs', metrics['ping_pongs'], episode)
-            writer.add_scalar('Training/Loss', metrics['loss'], episode)
+            writer.add_scalar('Episode/Reward', metrics['reward'], actual_episode)
+            writer.add_scalar('Episode/Length', metrics['length'], actual_episode)
+            writer.add_scalar('Episode/Handovers', metrics['handovers'], actual_episode)
+            writer.add_scalar('Episode/AvgRSRP', metrics['avg_rsrp'], actual_episode)
+            writer.add_scalar('Episode/PingPongs', metrics['ping_pongs'], actual_episode)
+            writer.add_scalar('Training/Loss', metrics['loss'], actual_episode)
 
             # Agent-specific metrics
             agent_config = agent.get_config()
             if 'epsilon' in agent_config:
-                writer.add_scalar('Agent/Epsilon', agent_config['epsilon'], episode)
+                writer.add_scalar('Agent/Epsilon', agent_config['epsilon'], actual_episode)
             if 'buffer_size' in agent_config:
-                writer.add_scalar('Agent/BufferSize', agent_config['buffer_size'], episode)
+                writer.add_scalar('Agent/BufferSize', agent_config['buffer_size'], actual_episode)
 
         # Periodic logging
         log_interval = level_config['log_interval']
@@ -325,7 +386,7 @@ def train(config, level_config, args, logger):
             recent_handovers = episode_handovers[-log_interval:]
 
             logger.info(
-                f"Episode {episode + 1:4d}/{num_episodes}: "
+                f"Episode {actual_episode + 1:4d}/{start_episode + num_episodes}: "
                 f"reward={np.mean(recent_rewards):+.2f}±{np.std(recent_rewards):.2f}, "
                 f"handovers={np.mean(recent_handovers):.1f}±{np.std(recent_handovers):.1f}, "
                 f"loss={metrics['loss']:.4f}"
@@ -457,6 +518,19 @@ Multi-Level Training Strategy:
         help='Path to checkpoint to resume from'
     )
 
+    # Batch training support
+    parser.add_argument(
+        '--start-episode', type=int,
+        default=0,
+        help='Starting episode number (for batch training)'
+    )
+
+    parser.add_argument(
+        '--num-episodes', type=int,
+        default=None,
+        help='Number of episodes to run (overrides level config, for batch training)'
+    )
+
     # Multi-core training
     parser.add_argument(
         '--num-envs', type=int,
@@ -475,7 +549,7 @@ Multi-Level Training Strategy:
     if 'environment' not in config:
         config['environment'] = {
             'time_step_seconds': 5,
-            'episode_duration_minutes': 95,
+            'episode_duration_minutes': 20,  # Use 20 minutes (typical session length)
             'max_visible_satellites': 10,
             'reward': {
                 'qos_weight': 1.0,

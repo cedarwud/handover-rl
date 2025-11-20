@@ -367,7 +367,14 @@ class DQNAgent(BaseAgent):
             self.target_network.load_state_dict(self.q_network.state_dict())
             logger.debug(f"Target network updated at step {self.training_steps}")
 
-        return loss.item()
+        # MEMORY FIX: Get loss value before tensors are released
+        loss_value = loss.item()
+
+        # MEMORY FIX: Explicitly delete tensors to prevent memory leak
+        del states, actions, rewards, next_states, dones
+        del current_q_values, target_q_values, loss
+
+        return loss_value
 
     def save(self, path: str) -> None:
         """Save agent to file"""

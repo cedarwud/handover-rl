@@ -120,6 +120,12 @@ TRAINING_LEVELS: Dict[int, Dict[str, Any]] = {
         'log_interval': 10,
         'checkpoint_interval': 100,
         'recommended': False,
+        # Safety settings (Episode protection)
+        'episode_timeout_seconds': 600,  # 10 minutes - auto-skip if episode hangs
+        'max_memory_percent': 95,  # 95% RAM - prevent OOM kill (raised from 90% due to gradual buildup)
+        'max_cpu_percent': 98,  # 98% CPU - detect runaway computation
+        'enable_safety_checks': True,  # Enable timeout and resource monitoring
+        'resource_check_interval': 10,  # Check resources every 10 steps
     },
 
     # Level 5: Full Training (TBD)

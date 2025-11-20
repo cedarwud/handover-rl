@@ -138,9 +138,21 @@ class SatelliteHandoverEnv(gym.Env):
         # Set episode start time
         if options and 'start_time' in options:
             self.episode_start = options['start_time']
+            logger.info(f"Episode start time from options: {self.episode_start}")
         else:
-            # Default to TLE data range (2025-10-07)
-            self.episode_start = datetime(2025, 10, 7, 0, 0, 0)
+            # Auto-detect latest TLE epoch and use as default start time
+            # This ensures we always use the most recent data available
+            epoch_range = self.adapter.tle_loader.get_epoch_range()
+            if epoch_range:
+                # Use latest TLE epoch minus 30 days for 30-day training window
+                latest_epoch = epoch_range[1]
+                self.episode_start = latest_epoch - timedelta(days=29)
+                logger.info(f"Auto-detected TLE range: {epoch_range[0].date()} to {epoch_range[1].date()}")
+                logger.info(f"Using episode start time: {self.episode_start}")
+            else:
+                # Fallback to hardcoded date if TLE detection fails (matches 30-day precompute table)
+                self.episode_start = datetime(2025, 10, 10, 0, 0, 0)
+                logger.warning(f"Could not auto-detect TLE range, using fallback: {self.episode_start}")
 
         self.current_time = self.episode_start
         self.previous_satellite = None
@@ -346,7 +358,11 @@ class SatelliteHandoverEnv(gym.Env):
 
             except Exception as e:
                 # Log error but continue querying other satellites
-                logger.debug(f"Error querying {sat_id}: {e}")
+                # Use warning for first satellite to catch timestamp range issues
+                if sat_id == self.satellite_ids[0]:
+                    logger.warning(f"Error querying {sat_id} at {self.current_time}: {e}")
+                else:
+                    logger.debug(f"Error querying {sat_id}: {e}")
                 continue
 
         # Sort by RSRP (best signal first) - Graph RL paper methodology
@@ -368,6 +384,10 @@ class SatelliteHandoverEnv(gym.Env):
         # Action i maps to satellite i in this list
         self.current_visible_satellites = [s['id'] for s in top_satellites]
         self.current_visible_states = [s['state_dict'] for s in top_satellites]
+
+        # CRITICAL FIX: Handle zero satellites case
+        if len(top_satellites) == 0:
+            logger.warning(f"No satellites visible at {self.current_time} - episode will terminate")
 
         logger.debug(f"Observation generated: {len(top_satellites)}/{len(visible_satellites)} "
                      f"top satellites from {len(self.satellite_ids)} total")
@@ -463,6 +483,11 @@ class SatelliteHandoverEnv(gym.Env):
             reward: Scalar reward value
         """
         reward = 0.0
+
+        # CRITICAL FIX: Handle no satellites case
+        if len(self.current_visible_satellites) == 0:
+            # Severe penalty for no connectivity
+            return -100.0  # Large negative reward
 
         # Component 1-3: QoS, Signal Quality, Latency
         if curr_sat and len(self.current_visible_satellites) > 0:

@@ -196,5 +196,5 @@ orbit_engine:
 # - No accuracy loss, pure performance optimization
 # - Results are identical to real-time calculation
 precompute:
-  enabled: true  # Enabled - 30-day optimized table (no compression, chunk-aligned)
-  table_path: "data/orbit_precompute_30days_optimized.h5"  # Path to optimized HDF5 table (2025-10-10 to 2025-11-08)
+  enabled: true  # Using 1-day test table for initial testing
+  table_path: "data/orbit_precompute_1day_test.h5"  # Path to precomputed HDF5 table

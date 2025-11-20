@@ -34,7 +34,7 @@ Usage (after refactoring):
 from .base_agent import BaseAgent
 
 # Utilities (existing)
-from .dqn_network import DQNNetwork, DuelingDQNNetwork
+from .dqn import QNetwork
 from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
 
 # Agents (refactored)
@@ -52,8 +52,7 @@ __all__ = [
     # Baselines
     'RSRPBaselineAgent',
     # Utilities
-    'DQNNetwork',
-    'DuelingDQNNetwork',
+    'QNetwork',
     'ReplayBuffer',
     'PrioritizedReplayBuffer',
 ]
