@@ -485,9 +485,9 @@ Multi-Level Training Strategy:
     # Training level (P0 CRITICAL)
     parser.add_argument(
         '--level', type=int,
-        choices=[0, 1, 2, 3, 4, 5],
+        choices=[0, 1, 2, 3, 4, 5, 6],
         required=True,
-        help='Training level (0=smoke test, 5=full training)'
+        help='Training level (0=smoke test, 5=full training, 6=long-term training)'
     )
 
     # Configuration
