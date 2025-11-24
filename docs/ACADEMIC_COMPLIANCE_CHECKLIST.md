@@ -86,7 +86,7 @@ grep -n "hardcode" src/adapters/*.py
 ```
 
 所有參數來自：
-- ✅ 配置文件 (`config/diagnostic_config.yaml`)
+- ✅ 配置文件 (`configs/diagnostic_config.yaml`)
 - ✅ OrbitEngineAdapter 內部計算
 - ✅ orbit-engine 標準實作
 

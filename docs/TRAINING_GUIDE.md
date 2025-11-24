@@ -16,12 +16,12 @@ python scripts/generate_orbit_precompute.py \
   --start-time "2025-10-07 00:00:00" \
   --end-time "2025-10-14 00:00:00" \
   --output data/orbit_precompute_7days.h5 \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 ```
 
 **2. 啟用預計算模式**
 
-編輯 `config/diagnostic_config.yaml`:
+編輯 `configs/diagnostic_config.yaml`:
 ```yaml
 precompute:
   enabled: true  # 改為 true
@@ -75,7 +75,7 @@ python train.py \
   --algorithm dqn \
   --level 0 \
   --output-dir output/smoke_test \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 ```
 
 **預期時間** (with precompute):
@@ -99,7 +99,7 @@ python train.py \
   --algorithm dqn \
   --level 1 \
   --output-dir output/level1_quick \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 ```
 
 **預期時間** (with precompute):
@@ -129,7 +129,7 @@ python train.py \
   --algorithm dqn \
   --level 2 \
   --output-dir output/level2_dev \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 ```
 
 **預期時間** (with precompute):
@@ -147,7 +147,7 @@ python train.py \
   --algorithm dqn \
   --level 3 \
   --output-dir output/level3_validation \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 ```
 
 **預期時間** (with precompute):
@@ -170,7 +170,7 @@ python train.py \
   --algorithm dqn \
   --level 4 \
   --output-dir output/level4_baseline \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 ```
 
 **預期時間** (with precompute):
@@ -188,7 +188,7 @@ python train.py \
   --algorithm dqn \
   --level 5 \
   --output-dir output/level5_full \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 ```
 
 **預期時間** (with precompute):
@@ -212,7 +212,7 @@ python train.py \
   --algorithm dqn \
   --level 6 \
   --output-dir output/level6_longterm \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 ```
 
 **預期時間** (with precompute):
@@ -269,7 +269,7 @@ python scripts/generate_orbit_precompute.py \
   --start-time "2025-10-07 00:00:00" \
   --end-time "2025-10-14 00:00:00" \
   --output data/orbit_precompute_7days.h5 \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 
 # 2. 啟用預計算（編輯 config）
 # 設置 precompute.enabled = true
@@ -378,7 +378,7 @@ python tools/check_progress.sh
 表示**未啟用預計算**！
 
 **解決**:
-1. 檢查 `config/diagnostic_config.yaml` 中 `precompute.enabled = true`
+1. 檢查 `configs/diagnostic_config.yaml` 中 `precompute.enabled = true`
 2. 檢查 `precompute.table_path` 是否正確
 3. 確認 HDF5 文件存在：`ls -lh data/orbit_precompute_7days.h5`
 

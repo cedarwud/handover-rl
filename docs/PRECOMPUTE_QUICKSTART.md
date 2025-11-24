@@ -15,7 +15,7 @@ python scripts/generate_orbit_precompute.py \
   --start-time "2025-10-07 00:00:00" \
   --end-time "2025-10-14 00:00:00" \
   --output data/orbit_precompute_7days.h5 \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 ```
 
 **What this does**:
@@ -26,7 +26,7 @@ python scripts/generate_orbit_precompute.py \
 
 ### Step 2: Enable Precompute Mode
 
-Edit `config/diagnostic_config.yaml`:
+Edit `configs/diagnostic_config.yaml`:
 
 ```yaml
 precompute:
@@ -37,7 +37,7 @@ precompute:
 ### Step 3: Train as Normal (100x faster!)
 
 ```bash
-python train.py --config config/diagnostic_config.yaml --level 5
+python train.py --config configs/diagnostic_config.yaml --level 5
 ```
 
 **Result**: Training that took 10 minutes per episode now takes ~6 seconds!
@@ -91,21 +91,21 @@ python scripts/generate_orbit_precompute.py \
   --start-time "2025-10-07 00:00:00" \
   --end-time "2025-10-14 00:00:00" \
   --output data/orbit_precompute_7days.h5 \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 
 # 14-day table (longer experiments)
 python scripts/generate_orbit_precompute.py \
   --start-time "2025-10-07 00:00:00" \
   --end-time "2025-10-21 00:00:00" \
   --output data/orbit_precompute_14days.h5 \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 
 # 1-day table (quick testing)
 python scripts/generate_orbit_precompute.py \
   --start-time "2025-10-07 00:00:00" \
   --end-time "2025-10-08 00:00:00" \
   --output data/orbit_precompute_1day.h5 \
-  --config config/diagnostic_config.yaml \
+  --config configs/diagnostic_config.yaml \
   --processes 16
 ```
 
@@ -118,7 +118,7 @@ python scripts/generate_orbit_precompute.py \
   --end-time "2025-10-14 00:00:00" \
   --output data/orbit_precompute_7days_2s.h5 \
   --time-step 2 \
-  --config config/diagnostic_config.yaml
+  --config configs/diagnostic_config.yaml
 ```
 
 ### Parallel Processing
@@ -129,7 +129,7 @@ python scripts/generate_orbit_precompute.py \
   --start-time "2025-10-07 00:00:00" \
   --end-time "2025-10-14 00:00:00" \
   --output data/orbit_precompute_7days.h5 \
-  --config config/diagnostic_config.yaml \
+  --config configs/diagnostic_config.yaml \
   --processes 32  # Use 32 cores
 ```
 

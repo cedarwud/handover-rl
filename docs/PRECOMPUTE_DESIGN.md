@@ -306,7 +306,7 @@ python scripts/generate_orbit_precompute.py \
     --start-time "2025-10-07 00:00:00" \
     --end-time "2025-10-14 00:00:00" \
     --output data/orbit_precompute_7days.h5 \
-    --config config/diagnostic_config.yaml
+    --config configs/diagnostic_config.yaml
 ```
 
 ### 階段 3: 修改訓練流程（最小改動）
@@ -323,7 +323,7 @@ adapter = AdapterWrapper(config)  # 自動選擇 backend
 
 **修改配置文件**:
 ```yaml
-# config/diagnostic_config.yaml
+# configs/diagnostic_config.yaml
 precompute:
   enabled: true
   table_path: "data/orbit_precompute_7days.h5"
