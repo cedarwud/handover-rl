@@ -12,14 +12,14 @@ Usage:
         --start-time "2025-10-07 00:00:00" \\
         --end-time "2025-10-14 00:00:00" \\
         --output data/orbit_precompute_7days.h5 \\
-        --config config/diagnostic_config.yaml
+        --config configs/diagnostic_config.yaml
 
     # Generate 14-day table (for longer experiments)
     python scripts/generate_orbit_precompute.py \\
         --start-time "2025-10-07 00:00:00" \\
         --end-time "2025-10-21 00:00:00" \\
         --output data/orbit_precompute_14days.h5 \\
-        --config config/diagnostic_config.yaml \\
+        --config configs/diagnostic_config.yaml \\
         --processes 16
 
 Performance:
@@ -88,7 +88,7 @@ def parse_args():
         '--config',
         type=str,
         required=True,
-        help='Training config file (e.g., config/diagnostic_config.yaml)'
+        help='Training config file (e.g., configs/diagnostic_config.yaml)'
     )
 
     parser.add_argument(
@@ -251,12 +251,12 @@ def main():
         logger.info(f"Output file: {output_path}")
         logger.info(f"File size:   {generator._get_file_size_mb(str(output_path)):.1f} MB")
         logger.info("\nNext steps:")
-        logger.info("1. Update config/diagnostic_config.yaml:")
+        logger.info("1. Update configs/diagnostic_config.yaml:")
         logger.info("   precompute:")
         logger.info("     enabled: true")
         logger.info(f"     table_path: \"{output_path}\"")
         logger.info("\n2. Run training:")
-        logger.info("   python train.py --config config/diagnostic_config.yaml")
+        logger.info("   python train.py --config configs/diagnostic_config.yaml")
         logger.info("="*60 + "\n")
 
     except KeyboardInterrupt:

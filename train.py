@@ -20,7 +20,7 @@ Usage:
     python train.py --algorithm dqn --level 5 --output-dir output/full_training
 
     # With custom config
-    python train.py --algorithm dqn --level 3 --config config/custom_config.yaml
+    python train.py --algorithm dqn --level 3 --config configs/custom_config.yaml
 
 Academic Compliance:
 - Real TLE data from Space-Track.org
@@ -493,7 +493,7 @@ Multi-Level Training Strategy:
     # Configuration
     parser.add_argument(
         '--config', type=str,
-        default='config/data_gen_config.yaml',
+        default='configs/data_gen_config.yaml',
         help='Path to configuration file'
     )
 

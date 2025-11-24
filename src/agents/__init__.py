@@ -15,12 +15,10 @@ Agents (will be added during refactoring):
     DQNAgent: Deep Q-Network (to be refactored in Task 1.3)
 
 Network Architectures:
-    DQNNetwork: Standard DQN architecture
-    DuelingDQNNetwork: Dueling DQN architecture (optional)
+    QNetwork: Standard Q-network architecture for DQN
 
 Utilities:
-    ReplayBuffer: Standard experience replay buffer
-    PrioritizedReplayBuffer: Prioritized experience replay (optional)
+    ReplayBuffer: Experience replay buffer for off-policy training
 
 Usage (after refactoring):
     from src.agents import BaseAgent, DQNAgent
@@ -35,7 +33,7 @@ from .base_agent import BaseAgent
 
 # Utilities (existing)
 from .dqn import QNetwork
-from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
+from .replay_buffer import ReplayBuffer
 
 # Agents (refactored)
 from .dqn import DQNAgent, DoubleDQNAgent
@@ -54,7 +52,6 @@ __all__ = [
     # Utilities
     'QNetwork',
     'ReplayBuffer',
-    'PrioritizedReplayBuffer',
 ]
 
 __version__ = "2.0.0-refactor"

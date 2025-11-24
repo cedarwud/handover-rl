@@ -93,9 +93,32 @@ class DoubleDQNAgent(DQNAgent):
         next_states = torch.FloatTensor(next_states).to(self.device)
         dones = torch.FloatTensor(dones).to(self.device)
 
+        # ====== NUMERICAL STABILITY CHECK 1: Input Data ======
+        if self.enable_nan_check:
+            # Check for NaN/Inf in input data
+            if torch.isnan(states).any() or torch.isinf(states).any():
+                logger.error(f"[NaN/Inf Detection] NaN or Inf detected in states at step {self.training_steps}")
+                logger.error(f"  States min: {states.min().item()}, max: {states.max().item()}")
+                return None
+
+            if torch.isnan(rewards).any() or torch.isinf(rewards).any():
+                logger.error(f"[NaN/Inf Detection] NaN or Inf detected in rewards at step {self.training_steps}")
+                logger.error(f"  Rewards min: {rewards.min().item()}, max: {rewards.max().item()}")
+                return None
+
         # Current Q-values: Q(s, a)
         current_q_values = self.q_network(states)
         current_q_values = current_q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
+
+        # ====== NUMERICAL STABILITY CHECK 2: Q-values ======
+        if self.enable_nan_check:
+            if torch.isnan(current_q_values).any() or torch.isinf(current_q_values).any():
+                logger.error(f"[NaN/Inf Detection] NaN or Inf detected in current Q-values at step {self.training_steps}")
+                logger.error(f"  Q-values min: {current_q_values.min().item()}, max: {current_q_values.max().item()}")
+                return None
+
+        # Clip Q-values to prevent explosion
+        current_q_values = torch.clamp(current_q_values, -self.q_value_clip, self.q_value_clip)
 
         # ==================== DOUBLE DQN LOGIC (KEY CHANGE) ====================
         # Step 1: Use ONLINE network to SELECT best action
@@ -109,12 +132,39 @@ class DoubleDQNAgent(DQNAgent):
             next_q_values_target = self.target_network(next_states)
             max_next_q_values = next_q_values_target.gather(1, next_actions).squeeze(1)
 
+            # ====== NUMERICAL STABILITY CHECK 3: Target Q-values ======
+            if self.enable_nan_check:
+                if torch.isnan(max_next_q_values).any() or torch.isinf(max_next_q_values).any():
+                    logger.error(f"[NaN/Inf Detection] NaN or Inf detected in target Q-values at step {self.training_steps}")
+                    logger.error(f"  Target Q min: {max_next_q_values.min().item()}, max: {max_next_q_values.max().item()}")
+                    return None
+
+            # Clip target Q-values
+            max_next_q_values = torch.clamp(max_next_q_values, -self.q_value_clip, self.q_value_clip)
+
             # Target Q-values: r + γ * Q_target(s', a_max)
             target_q_values = rewards + self.gamma * max_next_q_values * (1 - dones)
+
+            # Clip final target to prevent explosion
+            target_q_values = torch.clamp(target_q_values, -self.q_value_clip, self.q_value_clip)
         # ========================================================================
 
         # Compute loss (same as DQN)
         loss = self.criterion(current_q_values, target_q_values)
+
+        # ====== NUMERICAL STABILITY CHECK 4: Loss ======
+        if self.enable_nan_check:
+            if torch.isnan(loss) or torch.isinf(loss):
+                logger.error(f"[NaN/Inf Detection] NaN or Inf detected in loss at step {self.training_steps}")
+                logger.error(f"  Loss value: {loss.item()}")
+                return None
+
+            # Warn if loss is abnormally large (but not infinite)
+            if loss.item() > 1e6:
+                logger.warning(f"[Large Loss Warning] Abnormally large loss detected: {loss.item():.2e} at step {self.training_steps}")
+                logger.warning(f"  Current Q range: [{current_q_values.min().item():.2f}, {current_q_values.max().item():.2f}]")
+                logger.warning(f"  Target Q range: [{target_q_values.min().item():.2f}, {target_q_values.max().item():.2f}]")
+                logger.warning(f"  Rewards range: [{rewards.min().item():.2f}, {rewards.max().item():.2f}]")
 
         # Optimize (same as DQN)
         self.optimizer.zero_grad()
@@ -128,4 +178,12 @@ class DoubleDQNAgent(DQNAgent):
             self.target_network.load_state_dict(self.q_network.state_dict())
             logger.debug(f"Target network updated at step {self.training_steps}")
 
-        return loss.item()
+        # MEMORY FIX: Get loss value before tensors are released
+        loss_value = loss.item()
+
+        # MEMORY FIX: Explicitly delete tensors to prevent memory leak
+        del states, actions, rewards, next_states, dones
+        del current_q_values, target_q_values, loss
+        del next_q_values_online, next_actions, next_q_values_target, max_next_q_values
+
+        return loss_value

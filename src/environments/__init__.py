@@ -8,17 +8,17 @@ Components:
     SatelliteHandoverEnv: Online RL environment using real-time orbit-engine adapter
 
 Features:
-- Online RL mode with real-time orbit calculations
-- Integration with OrbitEngineAdapter (real TLE data + ITU-R/3GPP physics)
+- Online RL mode with orbit calculations (precompute or realtime)
+- Integration with AdapterWrapper (auto-selects optimal backend)
 - Gymnasium API compatibility
 - Multi-satellite state representation (Graph RL methodology)
 
 Usage:
     from src.environments import SatelliteHandoverEnv
-    from adapters.orbit_engine_adapter import OrbitEngineAdapter
+    from adapters import AdapterWrapper
 
-    # Initialize adapter
-    adapter = OrbitEngineAdapter(config)
+    # Initialize adapter (auto-selects precompute or realtime backend)
+    adapter = AdapterWrapper(config)
 
     # Create environment
     env = SatelliteHandoverEnv(adapter, satellite_ids, config)

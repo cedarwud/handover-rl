@@ -226,7 +226,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Append 1 day to precompute table")
     parser.add_argument("--input", required=True, help="Input HDF5 file")
     parser.add_argument("--output", required=True, help="Output HDF5 file")
-    parser.add_argument("--config", default="config/diagnostic_config.yaml", help="Config file")
+    parser.add_argument("--config", default="configs/diagnostic_config.yaml", help="Config file")
     parser.add_argument("--prepend", action="store_true", help="Add day BEFORE (default: add AFTER)")
 
     args = parser.parse_args()

@@ -1,4 +1,6 @@
+# ==========================================
 # Python
+# ==========================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -20,57 +22,90 @@ wheels/
 .installed.cfg
 *.egg
 
+# ==========================================
 # Virtual Environments
+# ==========================================
 venv/
 env/
 ENV/
 .venv
 
+# ==========================================
 # PyTorch Models & Checkpoints
+# ==========================================
 *.pth
 *.pt
 *.ckpt
-checkpoints/*.pth
-!checkpoints/.gitkeep
 
-# Training Outputs
+# ==========================================
+# Training Outputs & Data
+# ==========================================
+# Training outputs
 output/
 !output/.gitkeep
 
-# Training Data & Episodes
-data/episodes/
-data/*.json
-data/*.npz
-data/*.h5
+# Large data files
+data/
 !data/.gitkeep
+!data/README.md
 
-# Results & Logs
-results/
+# Logs
 logs/
-runs/
 *.log
 
-# TensorBoard
+# ==========================================
+# Results (Partial Tracking)
+# ==========================================
+# Ignore all results by default
+results/
+
+# But track paper figures and tables
+!results/figures/
+!results/figures/*.pdf
+!results/tables/
+!results/tables/*.tex
+
+# ==========================================
+# Archive & Backup (Large Files)
+# ==========================================
+# Archive directory (2.8 GB historical data)
+archive/
+
+# Backup directory (temporary files)
+backup/
+
+# ==========================================
+# TensorBoard & Experiment Tracking
+# ==========================================
+runs/
 logs/tensorboard/
 logs/wandb/
 
+# ==========================================
 # Jupyter Notebook
+# ==========================================
 .ipynb_checkpoints/
-notebooks/*.ipynb
-!notebooks/examples/
+*.ipynb
+!notebooks/examples/*.ipynb
 
-# IDEs
+# ==========================================
+# IDEs & Editors
+# ==========================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
+# ==========================================
 # OS
+# ==========================================
 .DS_Store
 Thumbs.db
 
+# ==========================================
 # Test Coverage
+# ==========================================
 htmlcov/
 .tox/
 .coverage
@@ -82,21 +117,24 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
-# Docker
-.dockerignore
-
+# ==========================================
 # Temporary Files
+# ==========================================
 *.tmp
 *.bak
 *.orig
 temp/
 tmp/
 
+# ==========================================
 # Documentation Build
+# ==========================================
 docs/_build/
 docs/.doctrees/
 
+# ==========================================
 # Environment Variables
+# ==========================================
 .env.local
 .env.*.local
 

@@ -1,0 +1,200 @@
+# Diagnostic Configuration for Episode 920 Bug
+# Purpose: Identify source of NaN/Inf and loss explosion
+#
+# Key Changes from epsilon_fixed_config.yaml:
+# 1. Enable NaN/Inf detection (new feature)
+# 2. Enable Q-value clipping (new feature)
+# 3. Use Huber loss instead of MSE (more robust)
+# 4. Keep all other hyperparameters same as epsilon_fixed_config.yaml
+
+# Inherit all data generation settings
+data_generation:
+  satellite_ids:
+    - "STARLINK-1008"
+    - "STARLINK-1010"
+
+  time_span_days: 30
+  time_step_seconds: 5
+  episode_duration_minutes: 20  # Changed from 10 to 20 (consistent with environment config)
+
+  ground_truth_lookahead_steps: 10
+
+  rsrp_threshold_dbm: -100.0
+  rsrp_hysteresis_db: 3.0
+
+  satellites:
+    total: 101
+    starlink: 101
+    oneweb: 0
+    source: "orbit-engine Stage 4 Pool Optimization (Starlink constellation)"
+    note: "Multi-constellation handover not realistic - using single constellation"
+
+  output_dir: "data/episodes"
+
+  tle_strategy:
+    method: "multi_tle_daily"
+    tle_files_count: 30
+    propagation_per_tle_days: 1
+    precision_guarantee: "±1 day"
+    tle_directory: "../tle_data/starlink/tle"
+    file_pattern: "starlink_*.tle"
+
+  episodes:
+    generation_method: "sliding_window"
+    starlink:
+      orbital_period_minutes: 95
+      steps_per_episode: 1140
+      expected_episodes_per_satellite: 454
+    oneweb:
+      orbital_period_minutes: 110
+      steps_per_episode: 1320
+      expected_episodes_per_satellite: 0
+    total_expected_30day: 45854
+    overlap: 0.5
+
+  split:
+    train: 0.75
+    val: 0.125
+    test: 0.125
+    random_seed: 42
+
+  output:
+    base_directory: "data"
+    format: "pickle"
+    compression: "gzip"
+    files:
+      train: "{base_directory}/{days}day/train_episodes.pkl.gz"
+      val: "{base_directory}/{days}day/val_episodes.pkl.gz"
+      test: "{base_directory}/{days}day/test_episodes.pkl.gz"
+      index: "{base_directory}/{days}day/timestamp_index.pkl"
+
+  performance:
+    enable_parallel: true
+    max_workers: null
+    batch_size: 10
+    max_memory_gb: null
+    enable_streaming: false
+
+# Environment Configuration
+environment:
+  time_step_seconds: 5
+  episode_duration_minutes: 20  # Changed from 95 to 20 (typical user session length)
+  max_visible_satellites: 10
+  reward:
+    qos_weight: 1.0
+    sinr_weight: 0.3
+    latency_weight: -0.2
+    handover_penalty: -0.5
+    ping_pong_penalty: -1.0
+
+# Agent Configuration - DIAGNOSTIC VERSION
+# ========================================
+# NEW FEATURES:
+# - enable_nan_check: true (detect NaN/Inf in Q-values, rewards, states)
+# - q_value_clip: 100.0 (clip Q-values to prevent explosion)
+# - Use Huber loss (SmoothL1Loss) instead of MSE for robustness
+#
+# UNCHANGED FROM epsilon_fixed_config.yaml:
+# - learning_rate: 2.0e-5 (conservative)
+# - epsilon_decay: 0.999 (slow decay, maintains exploration)
+# - target_update_freq: 1000 (stable target network)
+# - gradient_clip_norm: 1.0 (strict gradient clipping)
+agent:
+  learning_rate: 2.0e-5
+  gamma: 0.99
+  batch_size: 64
+  buffer_capacity: 10000
+  target_update_freq: 1000
+  hidden_dim: 128
+  epsilon_start: 1.0
+  epsilon_end: 0.05
+  epsilon_decay: 0.999
+  gradient_clip_norm: 1.0
+
+  # ==== NEW DIAGNOSTIC FEATURES ====
+  enable_nan_check: true      # Enable NaN/Inf detection (default: true)
+  q_value_clip: 100.0         # Clip Q-values to [-100, 100] to prevent explosion
+
+ground_station:
+  latitude: 24.9441
+  longitude: 121.3714
+  altitude_m: 36.0
+  min_elevation_deg: 10.0
+
+physics:
+  frequency_ghz: 12.5
+  bandwidth_mhz: 100
+  subcarrier_spacing_khz: 30
+  use_atmospheric_loss: true
+  use_rain_attenuation: false
+  tx_power_dbm: 33.0
+  tx_antenna_gain_db: 20.0
+  rx_antenna_gain_db: 35.0
+
+signal_calculator:
+  bandwidth_mhz: 100
+  subcarrier_spacing_khz: 30
+  noise_figure_db: 3.0
+  temperature_k: 290.0
+  measurement_offsets:
+    starlink:
+      offset_mo_db: 0.0
+      cell_offset_db: 0.0
+    oneweb:
+      offset_mo_db: 0.0
+      cell_offset_db: 0.0
+    unknown:
+      offset_mo_db: 0.0
+      cell_offset_db: 0.0
+
+atmospheric_model:
+  temperature_k: 283.0
+  pressure_hpa: 1013.25
+  water_vapor_density_g_m3: 7.5
+
+itur_physics:
+  use_itu_r_p618: true
+  use_itu_r_p676: true
+
+logging:
+  level: "INFO"
+  log_file: "logs/data_generation.log"
+  console_output: true
+
+validation:
+  verify_episode_lengths: true
+  verify_neighbor_consistency: true
+  save_validation_report: true
+
+estimates:
+  data_size_30day_gb: 5.0
+  generation_time_1day_minutes: 25
+  generation_time_30day_hours: 4
+
+orbit_engine:
+  orbit_engine_root: "../orbit-engine"
+  tle_data_dir: "../tle_data"
+  cache_dir: "data/cache"
+
+# Precompute Configuration (NEW in v3.0)
+# =====================================
+# For 100-1000x training speedup, use precomputed orbit state tables.
+#
+# How to use:
+# 1. Generate table once:
+#    python scripts/generate_orbit_precompute.py \
+#      --start-time "2025-10-07 00:00:00" \
+#      --end-time "2025-10-14 00:00:00" \
+#      --output data/orbit_precompute_7days.h5 \
+#      --config config/diagnostic_config.yaml
+#
+# 2. Enable precompute mode (set enabled: true)
+# 3. Run training as normal (100x faster!)
+#
+# Academic Note:
+# - Precompute uses SAME physics as real-time (ITU-R + 3GPP + SGP4)
+# - No accuracy loss, pure performance optimization
+# - Results are identical to real-time calculation
+precompute:
+  enabled: true  # Enabled - 30-day optimized table (no compression, chunk-aligned)
+  table_path: "data/active/orbit_precompute_30days_optimized.h5"  # Path to optimized HDF5 table (2025-10-10 to 2025-11-08)

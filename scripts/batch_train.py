@@ -129,7 +129,7 @@ def main():
                         help='RL algorithm to use')
     parser.add_argument('--level', type=int, default=4,
                         help='Training level (0-6)')
-    parser.add_argument('--config', type=str, default='config/diagnostic_config.yaml',
+    parser.add_argument('--config', type=str, default='configs/diagnostic_config.yaml',
                         help='Config file path')
     parser.add_argument('--output-dir', type=str, default='output/batch_training',
                         help='Output directory for all batches')

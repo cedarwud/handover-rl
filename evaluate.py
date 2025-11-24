@@ -343,7 +343,7 @@ def main():
 
     parser.add_argument(
         '--config', type=str,
-        default='config/data_gen_config.yaml',
+        default='configs/data_gen_config.yaml',
         help='Path to configuration file'
     )
 
@@ -435,7 +435,8 @@ def main():
     logger.info("✅ RSRP Baseline agent created")
 
     # ========== Evaluate agents ==========
-    start_time = datetime(2025, 7, 27, 0, 0, 0)
+    # Use time range within precompute table (2025-10-10 to 2025-11-08)
+    start_time = datetime(2025, 10, 10, 0, 0, 0)
 
     # Evaluate DQN
     dqn_metrics = evaluate_agent(
