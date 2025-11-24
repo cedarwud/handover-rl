@@ -132,6 +132,9 @@ tmp/
 docs/_build/
 docs/.doctrees/
 
+# Cleanup process reports (keep local, don't track)
+docs/reports/
+
 # ==========================================
 # Environment Variables
 # ==========================================
