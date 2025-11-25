@@ -300,8 +300,8 @@ class OrbitPrecomputeGenerator:
 
         for sat_id in self.satellite_ids:
             try:
-                # Get TLE from adapter's TLE loader
-                tle = self.adapter.tle_loader.get_tle(sat_id, datetime.utcnow())
+                # Get TLE from adapter's TLE loader (use get_tle_for_date method)
+                tle = self.adapter.tle_loader.get_tle_for_date(sat_id, datetime.utcnow())
                 if tle:
                     tle_data[sat_id] = (tle.line1, tle.line2, tle.epoch)
             except Exception as e:
