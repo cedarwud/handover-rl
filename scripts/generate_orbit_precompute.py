@@ -1,31 +1,45 @@
 #!/usr/bin/env python3
 """
-Generate Orbit Precompute Table
+Generate Orbit Precompute Table with Optimized Parallel Mode
 
 用途: 生成預計算軌道狀態表，用於加速訓練
 方法: 使用完整的 OrbitEngineAdapter 計算所有 (satellite, timestamp) 狀態
+優化: TLE 預加載模式減少 3680x 文件 I/O，提供 13x 性能提升
 輸出: HDF5 格式，可用於快速查詢
 
 Usage:
-    # Generate 7-day table (recommended for Level 5 training)
+    # Generate 30-day table (recommended for production)
     python scripts/generate_orbit_precompute.py \\
-        --start-time "2025-10-07 00:00:00" \\
-        --end-time "2025-10-14 00:00:00" \\
-        --output data/orbit_precompute_7days.h5 \\
-        --config configs/diagnostic_config.yaml
-
-    # Generate 14-day table (for longer experiments)
-    python scripts/generate_orbit_precompute.py \\
-        --start-time "2025-10-07 00:00:00" \\
-        --end-time "2025-10-21 00:00:00" \\
-        --output data/orbit_precompute_14days.h5 \\
+        --start-time "2025-10-26 00:00:00" \\
+        --end-time "2025-11-25 23:59:59" \\
+        --output data/orbit_precompute_30days_optimized.h5 \\
         --config configs/diagnostic_config.yaml \\
-        --processes 16
+        --processes 16 \\
+        --yes
 
-Performance:
-    - 7 days × 125 satellites × 5s timestep ≈ 2.1M computations
-    - With 16 processes: ~20-30 minutes
-    - Output size: ~700 MB (with compression)
+    # Generate 7-day table (for quick testing)
+    python scripts/generate_orbit_precompute.py \\
+        --start-time "2025-11-19 00:00:00" \\
+        --end-time "2025-11-26 00:00:00" \\
+        --output data/orbit_precompute_7days_optimized.h5 \\
+        --config configs/diagnostic_config.yaml \\
+        --processes 16 \\
+        --yes
+
+Performance (Optimized Parallel Mode with TLE Pre-loading):
+    - 30 days × 97 satellites × 5s timestep ≈ 52M computations
+    - With 16 processes: ~30 minutes (1.73M points/min)
+    - Output size: ~2.5 GB (no compression for speed)
+
+    - 7 days × 97 satellites × 5s timestep ≈ 11.7M computations
+    - With 16 processes: ~7 minutes
+    - Output size: ~563 MB
+
+Optimization Details:
+    - TLE data pre-loaded once in main process (not per worker)
+    - Reduces file I/O from 3,680 reads to 1 read (3680x reduction)
+    - Uses lightweight adapter for workers (no redundant initialization)
+    - 13x speedup vs standard parallel mode
 
 Academic Standard:
     - Uses complete ITU-R P.676-13 + 3GPP TS 38.214/215

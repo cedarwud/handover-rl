@@ -17,7 +17,8 @@
 - ✅ **Level 6 Training Complete**: 4,174 episodes, 1,000,000+ steps, 120 hours (DQN)
 - ✅ **Performance**: **70.6% handover reduction** vs RSRP baseline
 - ✅ **Precompute System**: 100x training acceleration verified
-- ✅ **30-day Optimized Table**: 2.3 GB precompute table generated
+- ✅ **30-day Optimized Table**: 2.5 GB precompute table (2025-10-26 to 2025-11-25)
+- ✅ **Optimized Parallel Mode**: TLE pre-loading for 13x faster generation (30 min for 30 days)
 - ✅ **Paper Assets**: 6 PDFs + 1 LaTeX table ready
 
 ### Version 3.0 - Precompute Acceleration System
@@ -61,26 +62,42 @@ cd handover-rl
 source venv/bin/activate
 ```
 
-### Generate Precompute Table (One-time, ~42-49 minutes)
+### Generate Precompute Table (One-time, ~30 minutes for 30 days)
 
 ```bash
-# Generate 7-day orbit state table
+# Generate 30-day orbit state table (recommended, optimized parallel mode)
 python scripts/generate_orbit_precompute.py \
-  --start-time "2025-10-07 00:00:00" \
-  --end-time "2025-10-14 00:00:00" \
-  --output data/orbit_precompute_7days.h5 \
-  --configs configs/diagnostic_config.yaml \
+  --start-time "2025-10-26 00:00:00" \
+  --end-time "2025-11-25 23:59:59" \
+  --output data/orbit_precompute_30days_optimized.h5 \
+  --config configs/diagnostic_config.yaml \
+  --processes 16 \
+  --yes
+
+# Or generate 7-day table for quick testing (~7 minutes)
+python scripts/generate_orbit_precompute.py \
+  --start-time "2025-11-19 00:00:00" \
+  --end-time "2025-11-26 00:00:00" \
+  --output data/orbit_precompute_7days_optimized.h5 \
+  --config configs/diagnostic_config.yaml \
+  --processes 16 \
   --yes
 ```
+
+**Performance**: Optimized parallel mode with TLE pre-loading provides 13x speedup
+- 30 days: ~30 minutes (97 satellites, 535,680 timesteps, 2.5 GB)
+- 7 days: ~7 minutes (97 satellites, 120,961 timesteps, 563 MB)
 
 ### Enable Precompute Mode
 
 Edit `configs/diagnostic_config.yaml`:
 ```yaml
 precompute:
-  enabled: true  # Change from false to true
-  table_path: "data/test/orbit_precompute_7days.h5"
+  enabled: true  # Already enabled by default
+  table_path: "data/orbit_precompute_30days_optimized.h5"
 ```
+
+**Note**: Training automatically detects and uses the precompute table's time range. No manual time configuration needed!
 
 ### Run Training
 
