@@ -269,24 +269,39 @@ def train(config, level_config, args, logger):
     episode_avg_rsrp = []
     best_reward = -np.inf
 
-    # Time configuration - Auto-detect from TLE data
-    # Get TLE epoch range from adapter to use latest data
+    # Time configuration - Auto-detect from adapter backend
+    # Get time range from precompute table or TLE data
     try:
-        epoch_range = env.unwrapped.adapter.tle_loader.get_epoch_range()
-        if epoch_range:
-            latest_epoch = epoch_range[1]
-            # Use latest epoch minus 29 days as start (for 30-day training window)
-            start_time_base = latest_epoch - timedelta(days=29)
-            logger.info(f"Auto-detected TLE range: {epoch_range[0].date()} to {epoch_range[1].date()}")
-            logger.info(f"Using start_time_base: {start_time_base}")
+        # Use AdapterWrapper's get_backend_info() for unified interface
+        adapter_info = adapter.get_backend_info()
+
+        if adapter_info['is_precompute']:
+            # Precompute mode: Get time range from table metadata
+            metadata = adapter_info['metadata']
+            start_time_base = datetime.fromisoformat(metadata['tle_epoch_start'])
+            end_time = datetime.fromisoformat(metadata['tle_epoch_end'])
+            logger.info(f"Using precompute table time range: {start_time_base.date()} to {end_time.date()}")
+            logger.info(f"Start time: {start_time_base}")
         else:
-            # Fallback to default if detection fails
-            start_time_base = datetime(2025, 10, 10, 0, 0, 0)  # Updated to match 30-day table
-            logger.warning(f"Could not auto-detect TLE range, using fallback: {start_time_base}")
+            # Real-time mode: Get TLE epoch range from adapter
+            try:
+                epoch_range = adapter.backend.tle_loader.get_epoch_range()
+                if epoch_range:
+                    latest_epoch = epoch_range[1]
+                    # Use latest epoch minus 29 days as start (for 30-day training window)
+                    start_time_base = latest_epoch - timedelta(days=29)
+                    logger.info(f"Auto-detected TLE range: {epoch_range[0].date()} to {epoch_range[1].date()}")
+                    logger.info(f"Using start_time_base: {start_time_base}")
+                else:
+                    raise ValueError("Could not get TLE epoch range")
+            except Exception as e:
+                # Fallback to default if detection fails
+                start_time_base = datetime(2025, 10, 10, 0, 0, 0)
+                logger.warning(f"Could not auto-detect TLE range ({e}), using fallback: {start_time_base}")
     except Exception as e:
-        # Fallback on any error (matches 30-day precompute table range)
-        start_time_base = datetime(2025, 10, 10, 0, 0, 0)  # Updated to match 30-day table
-        logger.warning(f"Error detecting TLE range: {e}, using fallback: {start_time_base}")
+        # Fallback on any error
+        start_time_base = datetime(2025, 10, 10, 0, 0, 0)
+        logger.warning(f"Error detecting time range: {e}, using fallback: {start_time_base}")
 
     # Read episode duration from config
     env_config = config.get('environment', config.get('data_generation', {}))
