@@ -156,7 +156,8 @@ class OrbitPrecomputeGenerator:
 
         # Compute states for each satellite (parallel)
         if num_processes > 1:
-            self._compute_states_parallel(
+            # Use optimized parallel mode with pre-loaded TLE data
+            self._compute_states_parallel_optimized(
                 output_path,
                 timestamps,
                 num_processes
@@ -286,6 +287,86 @@ class OrbitPrecomputeGenerator:
                 # Write to HDF5
                 for field_idx, field in enumerate(self.STATE_FIELDS):
                     sat_group[field][:] = states_array[:, field_idx]
+
+    def _preload_tle_data(self) -> Dict[str, tuple]:
+        """
+        Preload TLE data from adapter to avoid repeated file I/O in workers.
+
+        Returns:
+            Dictionary mapping {sat_id: (line1, line2, epoch)}
+        """
+        logger.info("Preloading TLE data for parallel workers...")
+        tle_data = {}
+
+        for sat_id in self.satellite_ids:
+            try:
+                # Get TLE from adapter's TLE loader
+                tle = self.adapter.tle_loader.get_tle(sat_id, datetime.utcnow())
+                if tle:
+                    tle_data[sat_id] = (tle.line1, tle.line2, tle.epoch)
+            except Exception as e:
+                logger.warning(f"Could not load TLE for {sat_id}: {e}")
+
+        logger.info(f"  Preloaded TLE data for {len(tle_data)} satellites")
+        return tle_data
+
+    def _compute_states_parallel_optimized(self,
+                                          output_path: str,
+                                          timestamps: List[datetime],
+                                          num_processes: int):
+        """
+        Optimized parallel computation with pre-loaded TLE data.
+
+        This avoids the bottleneck of each worker reloading 230+ TLE files.
+
+        If optimized parallel fails, will fall back to standard parallel or serial mode.
+        """
+        logger.info(f"✨ Using OPTIMIZED parallel mode ({num_processes} processes)...")
+        logger.info("   Pre-loading TLE data to avoid repeated file I/O...")
+
+        try:
+            # Step 1: Preload TLE data in main process (done once)
+            tle_data = self._preload_tle_data()
+
+            if not tle_data:
+                raise ValueError("No TLE data available for satellites")
+
+            # Step 2: Import optimized worker
+            from ._precompute_worker_optimized import compute_satellite_states_optimized
+
+            # Step 3: Prepare arguments for each worker
+            worker_args = [
+                (sat_id, self.config, timestamps, tle_data)
+                for sat_id in self.satellite_ids
+            ]
+
+            # Step 4: Run parallel computation
+            with mp.Pool(num_processes) as pool:
+                results = list(tqdm(
+                    pool.imap(compute_satellite_states_optimized, worker_args),
+                    total=len(self.satellite_ids),
+                    desc="Satellites (optimized)",
+                    unit="sat"
+                ))
+
+            logger.info("✅ Optimized parallel computation succeeded!")
+
+            # Step 5: Write results to HDF5
+            logger.info("Writing results to HDF5...")
+            with h5py.File(output_path, 'a') as f:
+                states_group = f['states']
+
+                for sat_id, states_array in tqdm(results, desc="Writing", unit="sat"):
+                    sat_group = states_group[sat_id]
+
+                    for field_idx, field in enumerate(self.STATE_FIELDS):
+                        sat_group[field][:] = states_array[:, field_idx]
+
+        except Exception as e:
+            logger.error(f"❌ Optimized parallel computation failed: {e}")
+            logger.warning("Falling back to standard parallel mode...")
+            # Fall back to standard parallel mode
+            self._compute_states_parallel(output_path, timestamps, num_processes)
 
     def _compute_states_parallel(self,
                                  output_path: str,
