@@ -1,28 +1,48 @@
 # Precompute Quickstart Guide
 
 **Purpose**: 100-1000x training speedup using precomputed orbit state tables
-**Version**: 3.0 (Precompute System)
-**Date**: 2025-11-08
+**Version**: 3.1 (With Optimized Parallel Mode)
+**Date**: 2025-11-25
 
 ---
 
 ## 🚀 Quick Start (3 Steps)
 
-### Step 1: Generate Precompute Table (One-time, ~30 min)
+### Step 1: Generate Precompute Table (One-time, ~30 minutes)
+
+**Recommended: 30-day table** (production use)
 
 ```bash
 python scripts/generate_orbit_precompute.py \
-  --start-time "2025-10-07 00:00:00" \
-  --end-time "2025-10-14 00:00:00" \
-  --output data/orbit_precompute_7days.h5 \
-  --config configs/diagnostic_config.yaml
+  --start-time "2025-10-26 00:00:00" \
+  --end-time "2025-11-25 23:59:59" \
+  --output data/orbit_precompute_30days_optimized.h5 \
+  --config configs/diagnostic_config.yaml \
+  --processes 16 \
+  --yes
+```
+
+**Or: 7-day table** (quick testing)
+
+```bash
+python scripts/generate_orbit_precompute.py \
+  --start-time "2025-11-19 00:00:00" \
+  --end-time "2025-11-26 00:00:00" \
+  --output data/orbit_precompute_7days_optimized.h5 \
+  --config configs/diagnostic_config.yaml \
+  --processes 16 \
+  --yes
 ```
 
 **What this does**:
-- Computes all satellite states using complete physics (ITU-R + 3GPP + SGP4)
-- Covers 7 days of orbit data
-- Saves to HDF5 format (~700 MB)
-- Uses all CPU cores for parallel computation
+- ✅ **Optimized Parallel Mode**: TLE pre-loading for 13x faster generation
+- ✅ **Complete Physics**: ITU-R P.676-13 + 3GPP TS 38.214/215 + SGP4
+- ✅ **97 Satellites**: Optimized Starlink pool from orbit-engine
+- ✅ **HDF5 Format**: No compression for maximum query speed
+
+**Performance** (with 16 processes):
+- 30 days: ~30 minutes → 2.5 GB
+- 7 days: ~7 minutes → 563 MB
 
 ### Step 2: Enable Precompute Mode
 
@@ -30,26 +50,46 @@ Edit `configs/diagnostic_config.yaml`:
 
 ```yaml
 precompute:
-  enabled: true  # Change from false to true
-  table_path: "data/orbit_precompute_7days.h5"
+  enabled: true  # Already enabled by default
+  table_path: "data/orbit_precompute_30days_optimized.h5"
 ```
+
+**Note**: Config already points to 30-day table!
 
 ### Step 3: Train as Normal (100x faster!)
 
 ```bash
-python train.py --config configs/diagnostic_config.yaml --level 5
+python train.py --algorithm dqn --level 1 --config configs/diagnostic_config.yaml --output-dir output/level1
+
+# Or full training
+python train.py --algorithm dqn --level 5 --config configs/diagnostic_config.yaml --output-dir output/level5
 ```
 
 **Result**: Training that took 10 minutes per episode now takes ~6 seconds!
+
+**Bonus**: Training automatically detects and uses the precompute table's time range. No manual time configuration needed!
 
 ---
 
 ## 📊 Performance Comparison
 
-| Mode | Per Episode | 920 Episodes | Speedup |
-|------|-------------|--------------|---------|
-| **Real-time** | ~10 min | ~154 hours | 1x |
-| **Precompute** | ~6 sec | ~1.5 hours | **100x** |
+| Mode | Per Episode | 1700 Episodes (Level 5) | Speedup |
+|------|-------------|------------------------|---------|
+| **Real-time** | ~10 min | ~283 hours (12 days) | 1x |
+| **Precompute** | ~6 sec | ~3-5 hours | **100x** ⭐ |
+
+### Generation Performance (Optimized Parallel Mode)
+
+| Duration | Satellites | Time (16 cores) | File Size | Speed |
+|----------|-----------|----------------|-----------|-------|
+| 7 days   | 97        | ~7 minutes     | 563 MB    | 1.73M points/min |
+| 30 days  | 97        | ~30 minutes    | 2.5 GB    | 1.73M points/min |
+
+**Why so fast?**
+- TLE pre-loading: 3,680 file reads → 1 read (3680x reduction)
+- Zero file I/O in workers
+- Lightweight adapter for parallel workers
+- 13x speedup vs standard parallel mode
 
 ---
 
@@ -58,8 +98,8 @@ python train.py --config configs/diagnostic_config.yaml --level 5
 ### Real-time Mode (Slow)
 ```
 每個 timestep:
-  For 125 satellites:
-    - SGP4 orbit calculation
+  For 97 satellites:
+    - SGP4 orbit calculation (TLE file I/O)
     - ITU-R atmospheric model (44+35 spectral lines)
     - 3GPP signal calculation
     - Geometry calculations
@@ -68,12 +108,21 @@ python train.py --config configs/diagnostic_config.yaml --level 5
 
 ### Precompute Mode (Fast)
 ```
-預計算階段（一次性）:
-  生成 HDF5 表 with all (satellite, time) states
+預計算階段（一次性，優化並行模式）:
+  主進程:
+    1. 預加載 97 個衛星的 TLE 數據（一次性）
+    2. 序列化 TLE 數據傳給所有 workers
+
+  Workers (16 並行):
+    1. 接收預加載的 TLE 數據（無 I/O！）
+    2. 使用完整物理模型計算狀態
+    3. 返回結果給主進程
+
+  結果: 30 天生成僅需 30 分鐘
 
 訓練階段:
-  For 125 satellites:
-    - O(1) table lookup
+  For 97 satellites:
+    - O(1) HDF5 table lookup
   → ~5ms per timestep (100x faster!)
 ```
 
@@ -86,28 +135,35 @@ python train.py --config configs/diagnostic_config.yaml --level 5
 Generate different tables for different experiments:
 
 ```bash
-# 7-day table (Level 5 training)
+# 30-day table (recommended for production)
 python scripts/generate_orbit_precompute.py \
-  --start-time "2025-10-07 00:00:00" \
-  --end-time "2025-10-14 00:00:00" \
-  --output data/orbit_precompute_7days.h5 \
-  --config configs/diagnostic_config.yaml
+  --start-time "2025-10-26 00:00:00" \
+  --end-time "2025-11-25 23:59:59" \
+  --output data/orbit_precompute_30days_optimized.h5 \
+  --config configs/diagnostic_config.yaml \
+  --processes 16 \
+  --yes
 
-# 14-day table (longer experiments)
+# 14-day table (medium experiments)
 python scripts/generate_orbit_precompute.py \
-  --start-time "2025-10-07 00:00:00" \
-  --end-time "2025-10-21 00:00:00" \
-  --output data/orbit_precompute_14days.h5 \
-  --config configs/diagnostic_config.yaml
+  --start-time "2025-11-12 00:00:00" \
+  --end-time "2025-11-26 00:00:00" \
+  --output data/orbit_precompute_14days_optimized.h5 \
+  --config configs/diagnostic_config.yaml \
+  --processes 16 \
+  --yes
 
 # 1-day table (quick testing)
 python scripts/generate_orbit_precompute.py \
-  --start-time "2025-10-07 00:00:00" \
-  --end-time "2025-10-08 00:00:00" \
+  --start-time "2025-11-25 00:00:00" \
+  --end-time "2025-11-26 00:00:00" \
   --output data/orbit_precompute_1day.h5 \
   --config configs/diagnostic_config.yaml \
-  --processes 16
+  --processes 16 \
+  --yes
 ```
+
+**Pro Tip**: Use current or future dates. Training will automatically use the table's time range!
 
 ### Custom Time Step
 
@@ -123,15 +179,28 @@ python scripts/generate_orbit_precompute.py \
 
 ### Parallel Processing
 
+**Optimized parallel mode** (recommended):
+
 ```bash
-# Use more CPU cores for faster generation
+# Use all available CPU cores
 python scripts/generate_orbit_precompute.py \
-  --start-time "2025-10-07 00:00:00" \
-  --end-time "2025-10-14 00:00:00" \
-  --output data/orbit_precompute_7days.h5 \
+  --start-time "2025-10-26 00:00:00" \
+  --end-time "2025-11-25 23:59:59" \
+  --output data/orbit_precompute_30days_optimized.h5 \
   --config configs/diagnostic_config.yaml \
-  --processes 32  # Use 32 cores
+  --processes 16  # Recommended: 8-16 cores
+  --yes
 ```
+
+**Performance scaling**:
+- 4 cores: ~60 minutes (30 days)
+- 8 cores: ~40 minutes
+- 16 cores: ~30 minutes ⭐ Recommended
+- 32 cores: ~25 minutes (diminishing returns)
+
+**Why use --yes?**
+- Skips confirmation prompt
+- Useful for automated workflows
 
 ---
 
@@ -266,14 +335,14 @@ MemoryError: Unable to allocate array
 
 ## 💾 Storage Requirements
 
-| Duration | Satellites | Size (compressed) |
-|----------|-----------|-------------------|
-| 1 day    | 125       | ~100 MB           |
-| 7 days   | 125       | ~700 MB           |
-| 14 days  | 125       | ~1.4 GB           |
-| 30 days  | 125       | ~3.0 GB           |
+| Duration | Satellites | Timesteps | Size (no compression) |
+|----------|-----------|-----------|----------------------|
+| 1 day    | 97        | 17,856    | ~85 MB               |
+| 7 days   | 97        | 120,961   | ~563 MB              |
+| 14 days  | 97        | 241,921   | ~1.1 GB              |
+| 30 days  | 97        | 535,680   | ~2.5 GB              |
 
-HDF5 compression (gzip level 4) reduces size by ~50%.
+**Note**: We use **no compression** for maximum query speed. Compression would reduce size by ~30% but slow down queries.
 
 ---
 

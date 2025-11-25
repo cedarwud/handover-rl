@@ -1,7 +1,7 @@
 # Training Guide - 預計算系統訓練指南
 
-**日期**: 2025-11-08
-**版本**: 3.0 (With Precompute System)
+**日期**: 2025-11-25
+**版本**: 3.1 (With Optimized Parallel Mode)
 
 ---
 
@@ -9,33 +9,57 @@
 
 ### 訓練前必須完成的步驟
 
-**1. 生成預計算表** (一次性，約 30 分鐘)
+**1. 生成預計算表** (一次性，~30 分鐘)
+
+**推薦：30天表** (適合所有級別訓練)
 
 ```bash
 python scripts/generate_orbit_precompute.py \
-  --start-time "2025-10-07 00:00:00" \
-  --end-time "2025-10-14 00:00:00" \
-  --output data/orbit_precompute_7days.h5 \
-  --config configs/diagnostic_config.yaml
+  --start-time "2025-10-26 00:00:00" \
+  --end-time "2025-11-25 23:59:59" \
+  --output data/orbit_precompute_30days_optimized.h5 \
+  --config configs/diagnostic_config.yaml \
+  --processes 16 \
+  --yes
 ```
+
+**或：7天表** (快速測試)
+
+```bash
+python scripts/generate_orbit_precompute.py \
+  --start-time "2025-11-19 00:00:00" \
+  --end-time "2025-11-26 00:00:00" \
+  --output data/orbit_precompute_7days_optimized.h5 \
+  --config configs/diagnostic_config.yaml \
+  --processes 16 \
+  --yes
+```
+
+**生成時間**:
+- 30天: ~30 分鐘 (優化並行模式，16進程)
+- 7天: ~7 分鐘
 
 **2. 啟用預計算模式**
 
 編輯 `configs/diagnostic_config.yaml`:
 ```yaml
 precompute:
-  enabled: true  # 改為 true
-  table_path: "data/orbit_precompute_7days.h5"
+  enabled: true  # 默認已啟用
+  table_path: "data/orbit_precompute_30days_optimized.h5"
 ```
+
+**注意**: 配置文件已經指向30天表！
 
 **3. 確認啟用成功**
 
 運行訓練時應該看到：
 ```
 ✅ Precompute mode enabled - Training will be ~100x faster!
-   Table: data/orbit_precompute_7days.h5
-   Time range: 2025-10-07T00:00:00 to 2025-10-14T00:00:00
+   Table: data/orbit_precompute_30days_optimized.h5
+   Time range: 2025-10-26T00:00:00 to 2025-11-25T23:59:59
 ```
+
+**Bonus**: 訓練會自動檢測並使用預計算表的時間範圍，無需手動配置！
 
 如果看到：
 ```
