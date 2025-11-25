@@ -74,8 +74,12 @@ def compute_satellite_states_optimized(args: Tuple[str, dict, List[datetime], di
                     states_array[t_idx, field_idx] = state_dict.get(field, np.nan)
 
             except Exception as e:
-                # Fill with NaN on error
-                logger.debug(f"Error computing {sat_id} at {timestamp}: {e}")
+                # Log error for debugging (CRITICAL for future orbit-engine updates)
+                logger.error(
+                    f"Error computing state for satellite {sat_id} at {timestamp}: {e}",
+                    exc_info=True  # Include full traceback for debugging
+                )
+                # Fill with NaN on error to allow processing to continue
                 states_array[t_idx, :] = np.nan
 
         return sat_id, states_array
@@ -116,6 +120,14 @@ def compute_satellite_states(args: Tuple[str, dict, List[datetime]]) -> Tuple[st
                 states_array[t_idx, field_idx] = state_dict.get(field, np.nan)
 
         except Exception as e:
+            # Log error for debugging (CRITICAL for future orbit-engine updates)
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(
+                f"Error computing state for satellite {sat_id} at {timestamp}: {e}",
+                exc_info=True  # Include full traceback for debugging
+            )
+            # Fill with NaN on error to allow processing to continue
             states_array[t_idx, :] = np.nan
 
     return sat_id, states_array

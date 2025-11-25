@@ -90,6 +90,63 @@ class OrbitPrecomputeGenerator:
         logger.info(f"  ⚠️  Note: Parallel mode requires OrbitEngineAdapter serialization")
         logger.info(f"     If parallel fails, will automatically fall back to serial mode")
 
+    def _resolve_config_paths(self, config: Dict) -> Dict:
+        """
+        Resolve all relative paths in config to absolute paths.
+
+        This is CRITICAL for multiprocessing to work correctly across orbit-engine updates.
+
+        Problem: Multiprocessing子進程的工作目錄可能不同，相對路徑會解析失敗
+        Solution: 轉換所有路徑為絕對路徑（在主進程中）
+
+        Future-proof: 即使orbit-engine格式改變，只要config結構一致就能正常工作
+
+        Args:
+            config: Original config with potentially relative paths
+
+        Returns:
+            New config with all paths resolved to absolute paths
+        """
+        import copy
+        from pathlib import Path
+        import os
+
+        # Deep copy to avoid modifying original config
+        resolved_config = copy.deepcopy(config)
+
+        # Get current working directory (main process)
+        cwd = Path.cwd()
+
+        # Resolve TLE paths in data_generation section
+        if 'data_generation' in resolved_config:
+            if 'tle_strategy' in resolved_config['data_generation']:
+                tle_strategy = resolved_config['data_generation']['tle_strategy']
+                if 'tle_directory' in tle_strategy:
+                    tle_dir = tle_strategy['tle_directory']
+                    # Convert to absolute path
+                    abs_tle_dir = (cwd / tle_dir).resolve()
+                    tle_strategy['tle_directory'] = str(abs_tle_dir)
+                    logger.debug(f"Resolved TLE directory: {tle_dir} → {abs_tle_dir}")
+
+        # Resolve paths in orbit_engine section
+        if 'orbit_engine' in resolved_config:
+            orbit_engine = resolved_config['orbit_engine']
+
+            if 'orbit_engine_root' in orbit_engine:
+                root = orbit_engine['orbit_engine_root']
+                abs_root = (cwd / root).resolve()
+                orbit_engine['orbit_engine_root'] = str(abs_root)
+                logger.debug(f"Resolved orbit_engine_root: {root} → {abs_root}")
+
+            if 'tle_data_dir' in orbit_engine:
+                tle_data = orbit_engine['tle_data_dir']
+                abs_tle_data = (cwd / tle_data).resolve()
+                orbit_engine['tle_data_dir'] = str(abs_tle_data)
+                logger.debug(f"Resolved tle_data_dir: {tle_data} → {abs_tle_data}")
+
+        logger.info("✅ Config paths resolved to absolute paths for multiprocessing")
+        return resolved_config
+
     def generate(self,
                  start_time: datetime,
                  end_time: datetime,
@@ -241,12 +298,13 @@ class OrbitPrecomputeGenerator:
                     # Optimized for training: No compression + chunk aligned to episode
                     # Episode = 20 min = 240 timesteps (at 5s intervals)
                     # This eliminates cross-chunk reads and decompression overhead
+                    chunk_size = min(240, num_timesteps)  # Ensure chunk size doesn't exceed data size
                     sat_group.create_dataset(
                         field,
                         shape=(num_timesteps,),
                         dtype=np.float32,
                         compression=None,  # No compression for maximum speed
-                        chunks=(240,),     # Align chunks to episode boundaries
+                        chunks=(chunk_size,) if num_timesteps > 1 else None,  # No chunking for single timestep
                         fillvalue=np.nan   # Use NaN for missing/invalid states
                     )
 
@@ -288,22 +346,33 @@ class OrbitPrecomputeGenerator:
                 for field_idx, field in enumerate(self.STATE_FIELDS):
                     sat_group[field][:] = states_array[:, field_idx]
 
-    def _preload_tle_data(self) -> Dict[str, tuple]:
+    def _preload_tle_data(self, reference_time: datetime) -> Dict[str, tuple]:
         """
         Preload TLE data from adapter to avoid repeated file I/O in workers.
+
+        CRITICAL FIX: Use reference_time from precompute time range, not utcnow()!
+        Previous bug: Used datetime.utcnow() which fails after orbit-engine updates
+        when TLE files don't include current date.
+
+        Args:
+            reference_time: Time within the precompute range to use for TLE selection
 
         Returns:
             Dictionary mapping {sat_id: (line1, line2, epoch)}
         """
-        logger.info("Preloading TLE data for parallel workers...")
+        logger.info(f"Preloading TLE data for parallel workers (reference: {reference_time.date()})...")
         tle_data = {}
 
         for sat_id in self.satellite_ids:
             try:
-                # Get TLE from adapter's TLE loader (use get_tle_for_date method)
-                tle = self.adapter.tle_loader.get_tle_for_date(sat_id, datetime.utcnow())
+                # Get TLE from adapter's TLE loader for the actual precompute time range
+                # NOT datetime.utcnow()! This ensures we get TLE data that matches
+                # the time period we're computing states for.
+                tle = self.adapter.tle_loader.get_tle_for_date(sat_id, reference_time)
                 if tle:
                     tle_data[sat_id] = (tle.line1, tle.line2, tle.epoch)
+                else:
+                    logger.warning(f"No TLE found for {sat_id} at {reference_time.date()}")
             except Exception as e:
                 logger.warning(f"Could not load TLE for {sat_id}: {e}")
 
@@ -326,7 +395,8 @@ class OrbitPrecomputeGenerator:
 
         try:
             # Step 1: Preload TLE data in main process (done once)
-            tle_data = self._preload_tle_data()
+            # CRITICAL FIX: Use first timestamp from precompute range, not utcnow()!
+            tle_data = self._preload_tle_data(timestamps[0])
 
             if not tle_data:
                 raise ValueError("No TLE data available for satellites")
@@ -334,9 +404,14 @@ class OrbitPrecomputeGenerator:
             # Step 2: Import optimized worker
             from ._precompute_worker_optimized import compute_satellite_states_optimized
 
-            # Step 3: Prepare arguments for each worker
+            # Step 3: Resolve config paths for multiprocessing
+            # CRITICAL: Convert relative paths to absolute paths before passing to workers
+            # This ensures paths work correctly regardless of worker process's CWD
+            resolved_config = self._resolve_config_paths(self.config)
+
+            # Step 4: Prepare arguments for each worker
             worker_args = [
-                (sat_id, self.config, timestamps, tle_data)
+                (sat_id, resolved_config, timestamps, tle_data)
                 for sat_id in self.satellite_ids
             ]
 
@@ -390,9 +465,13 @@ class OrbitPrecomputeGenerator:
             # Use module-level worker function (must be picklable for multiprocessing)
             # See _precompute_worker.py for implementation
 
+            # Resolve config paths for multiprocessing
+            # CRITICAL: Convert relative paths to absolute paths before passing to workers
+            resolved_config = self._resolve_config_paths(self.config)
+
             # Prepare arguments for each worker
             worker_args = [
-                (sat_id, self.config, timestamps)
+                (sat_id, resolved_config, timestamps)
                 for sat_id in self.satellite_ids
             ]
 

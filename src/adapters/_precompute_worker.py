@@ -62,7 +62,16 @@ def compute_satellite_states(args: Tuple[str, dict, List[datetime]]) -> Tuple[st
                 states_array[t_idx, field_idx] = state_dict.get(field, np.nan)
 
         except Exception as e:
-            # Fill with NaN on error
+            # Log error for debugging (CRITICAL for future orbit-engine updates)
+            # Previous behavior: silently fill NaN, making debugging impossible
+            # New behavior: log error but still continue processing
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(
+                f"Error computing state for satellite {sat_id} at {timestamp}: {e}",
+                exc_info=True  # Include full traceback
+            )
+            # Fill with NaN on error to allow processing to continue
             states_array[t_idx, :] = np.nan
 
     return sat_id, states_array
