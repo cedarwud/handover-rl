@@ -181,7 +181,11 @@ python -c "import src.environments; print('✓ Installation successful')"
 
 ## Quick Start
 
-### Step 1: Generate Precompute Table (One-Time, ~30 minutes)
+### Prerequisites: Generate Required Data Files
+
+Before training, you need to generate the precompute table and satellite IDs list.
+
+Generate the orbit precompute table. This is a **one-time operation** that pre-calculates all satellite positions and signal characteristics.
 
 **Option A: 30-day table (Recommended for full training)**
 ```bash
@@ -207,7 +211,31 @@ python tools/orbit/generate_orbit_precompute.py \
 - 30-day table: ~30 minutes, 125 satellites, 2.5GB, 518,400 timesteps
 - 7-day table: ~7 minutes, 125 satellites, 600MB, 120,960 timesteps
 
-### Step 2: Quick Test Training (100 episodes, ~5 minutes)
+**Step 2: Extract Satellite IDs**
+
+After generating the precompute table, extract the list of satellite IDs:
+
+```bash
+python -c "
+import h5py
+with h5py.File('data/orbit_precompute_30days_optimized.h5', 'r') as f:
+    sat_ids = sorted(list(f.keys()))
+with open('data/satellite_ids_from_precompute.txt', 'w') as f:
+    for sat_id in sat_ids:
+        f.write(f'{sat_id}\n')
+print(f'✓ Extracted {len(sat_ids)} satellite IDs')
+"
+```
+
+This creates `data/satellite_ids_from_precompute.txt` which is required for training.
+
+---
+
+### Training Workflow
+
+Now you're ready to train! Follow these steps:
+
+**Step 1: Quick Test Training (100 episodes, ~5 minutes)**
 
 ```bash
 python train_sb3.py \
@@ -222,7 +250,7 @@ Episode 100/100 | Reward: 45.2 | Handovers: 8.3 | ε: 0.81
 ✓ Training complete: output/test_run/models/dqn_final.zip
 ```
 
-### Step 3: Evaluate Trained Model
+**Step 2: Evaluate Trained Model**
 
 ```bash
 python scripts/evaluate_sb3.py \
@@ -231,7 +259,7 @@ python scripts/evaluate_sb3.py \
   --episodes 100
 ```
 
-### Step 4: Compare with Baselines
+**Step 3: Compare with Baselines**
 
 ```bash
 python scripts/evaluate_baselines.py
