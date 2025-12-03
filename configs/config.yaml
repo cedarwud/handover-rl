@@ -1,0 +1,164 @@
+# ========================================
+# Handover-RL Configuration
+# ========================================
+# Main configuration file for LEO Satellite Handover RL Training
+#
+# Version: 4.0 (Clean)
+# Date: 2025-12-03
+# Environment: V9 (RVT-based reward, IEEE TAES 2024)
+# Framework: Stable Baselines3 (SB3) DQN
+
+# ============================================================================
+# Ground Station Configuration
+# ============================================================================
+ground_station:
+  latitude: 25.0330      # Taipei, Taiwan
+  longitude: 121.5654
+  altitude_m: 10.0
+  min_elevation_deg: 20.0  # Minimum elevation angle for satellite visibility
+
+# ============================================================================
+# Environment Settings
+# ============================================================================
+environment:
+  # Simulation parameters
+  time_step_seconds: 5              # Each step = 5 seconds
+  episode_duration_minutes: 10      # Episode length = 10 minutes (120 steps)
+  max_visible_satellites: 15        # Top-15 candidates for selection
+
+  # Reward function parameters (V9 - RVT-based)
+  reward:
+    # Handover penalties
+    handover_to_loaded_penalty: -600.0    # z1: Penalty for switching to loaded satellite
+    handover_to_free_penalty: -350.0      # z2: Penalty for switching to free satellite
+
+    # Stay rewards/penalties
+    stay_loaded_penalty_factor: 100.0     # f1: Penalty factor for staying on loaded sat
+    rvt_reward_weight: 2.0                # f2: Reward weight for RVT (Remaining Visible Time)
+
+    # Additional penalties/bonuses
+    ping_pong_penalty: -50.0              # Penalty for rapid back-and-forth handovers
+    connectivity_bonus: 0.0               # Bonus for maintaining connectivity (not used in V9)
+    stability_bonus: 0.0                  # Bonus for stable connections (not used in V9)
+
+    # QoS weights (not primary in V9)
+    qos_weight: 0.1                       # Weight for QoS metrics
+    sinr_weight: 0.0                      # Weight for SINR
+    latency_weight: 0.0                   # Weight for latency
+
+    # Constraints
+    min_dwell_time_seconds: 60            # Minimum 60s between handovers
+    min_elevation_deg: 20.0               # Minimum elevation angle
+
+# ============================================================================
+# Agent Hyperparameters (SB3 DQN)
+# ============================================================================
+agent:
+  # Learning parameters
+  learning_rate: 0.0001      # Adam optimizer learning rate
+  gamma: 0.95                # Discount factor for future rewards
+  batch_size: 64             # Mini-batch size for training
+  buffer_capacity: 10000     # Replay buffer size
+  target_update_freq: 100    # Update target network every N steps
+
+  # Exploration parameters
+  epsilon_start: 0.82        # Initial exploration rate
+  epsilon_end: 0.2           # Final exploration rate
+  epsilon_decay: 0.9999      # Decay rate (slow decay for stable learning)
+
+  # Network architecture
+  hidden_dims: [128, 128]    # Hidden layer dimensions for DQN
+
+# ============================================================================
+# Precompute Configuration
+# ============================================================================
+precompute:
+  enabled: false  # Disabled - precompute table format incompatible
+  table_path: "data/orbit_precompute_existing.h5"
+
+  # If precompute is disabled or table not found, falls back to real-time calculations
+  # Real-time mode is VERY slow but works without precomputed data
+
+# ============================================================================
+# Physics Configuration (for real-time calculations)
+# ============================================================================
+physics:
+  frequency_ghz: 12.5             # Ku-band frequency
+  bandwidth_mhz: 100              # Channel bandwidth
+  subcarrier_spacing_khz: 30      # 5G NR subcarrier spacing
+  use_atmospheric_loss: true      # Enable atmospheric attenuation
+  use_rain_attenuation: false     # Disable rain (adds complexity)
+  tx_power_dbm: 33.0              # Satellite transmit power
+  tx_antenna_gain_db: 20.0        # Satellite antenna gain
+  rx_antenna_gain_db: 35.0        # Ground station antenna gain
+
+signal_calculator:
+  bandwidth_mhz: 100              # Match physics bandwidth
+  subcarrier_spacing_khz: 30      # Match physics subcarrier spacing
+  noise_figure_db: 3.0            # Receiver noise figure
+  temperature_k: 290.0            # Standard room temperature
+  measurement_offsets:
+    starlink:
+      offset_mo_db: 0.0
+      cell_offset_db: 0.0
+    oneweb:
+      offset_mo_db: 0.0
+      cell_offset_db: 0.0
+    unknown:
+      offset_mo_db: 0.0
+      cell_offset_db: 0.0
+
+atmospheric_model:
+  enabled: true
+  model_type: "itur"              # Use ITU-R atmospheric model
+  temperature_k: 290.0            # Standard temperature
+  pressure_hpa: 1013.25           # Standard pressure
+  water_vapor_density_g_m3: 7.5   # Typical atmospheric water vapor
+
+# ============================================================================
+# Data Generation (for precompute table generation)
+# ============================================================================
+data_generation:
+  # Time range for precompute table
+  start_time: "2025-10-26 00:00:00"  # UTC
+  end_time: "2025-11-25 23:59:59"    # UTC (30 days)
+
+  # Sampling
+  time_step_seconds: 5               # Match environment time step
+
+  # Ground station (same as above)
+  latitude: 25.0330
+  longitude: 121.5654
+  altitude_m: 10.0
+  min_elevation_deg: 20.0
+
+  # TLE (Two-Line Element) strategy for satellite orbit data
+  tle_strategy:
+    method: "multi_tle_daily"        # Use daily TLE updates for accuracy
+    tle_files_count: 30              # 30 days of TLE files
+    propagation_per_tle_days: 1      # Propagate each TLE for 1 day
+    precision_guarantee: "±1 day"
+    tle_directory: "../tle_data/starlink/tle"
+    file_pattern: "starlink_*.tle"
+
+# ============================================================================
+# Notes
+# ============================================================================
+#
+# V9 Environment (RVT-based):
+# - Reward function based on Remaining Visible Time (RVT)
+# - Follows IEEE TAES 2024 satellite handover standards
+# - 14-dimensional observation space (13 features + RVT)
+# - Penalizes handovers, rewards long visibility windows
+# - Load-aware decision making
+#
+# Training with SB3:
+# - Single seed: python train_sb3.py --config configs/config.yaml --output-dir output/dqn --num-episodes 2500
+# - Multi-seed: Run with different --seed values (42, 123, 456, 789, 2024)
+# - Typical training time: ~25 minutes per 2500 episodes (with precompute)
+#
+# Precompute System:
+# - Generate table: python tools/orbit/generate_orbit_precompute.py --config configs/config.yaml
+# - 30-day table: ~2.5GB, 518,400 timesteps, ~30 minutes generation time
+# - 7-day table: ~600MB, 120,960 timesteps, ~7 minutes generation time
+#

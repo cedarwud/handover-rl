@@ -1,7 +1,7 @@
 """
 RL Environments - Gymnasium-Compatible Satellite Handover Environments
 
-This module provides concrete environment implementations for satellite
+This module provides the production environment implementation for satellite
 handover decision-making.
 
 Components:
@@ -29,12 +29,13 @@ Usage:
     next_state, reward, terminated, truncated, info = env.step(action)
 
 Note:
-    - HandoverEnvironment (offline RL) has been deprecated and moved to archive/
-    - Current implementation uses SatelliteHandoverEnv (online RL)
+    - Current implementation: RVT-based reward following IEEE TAES 2024 paper
+    - Older versions (V1, V2, V6) have been archived
 """
 
+# RVT-based reward (RECOMMENDED - latest, academic standard)
 from .satellite_handover_env import SatelliteHandoverEnv
 
 __all__ = ['SatelliteHandoverEnv']
 
-__version__ = "3.0.0"  # Online RL version
+__version__ = "1.0.0"  # RVT-based reward (IEEE TAES 2024)

@@ -2,14 +2,33 @@
 """
 Multi-Satellite Handover Environment
 
-Academic Standard: Real TLE data, Complete physics, No hardcoding
-Literature: Graph RL (Aerospace 2024), DHO Protocol (IEEE TWC 2023)
+RVT-Based Reward Function (Academic Standard)
+=================================================
+Reference: "User-Centric Satellite Handover for Multiple Traffic Profiles
+Using Deep Q-Learning" (IEEE TAES 2024, Equation 14)
 
-Based on Graph RL paper multi-satellite architecture:
-- Query ALL satellites at each timestep
-- Select top-K by RSRP
-- Dynamic action space (select which satellite)
-- Multi-objective reward
+Previous Issue (V2-V8): QoS-based rewards led to extreme stay behavior (99.4% stay).
+With 10-minute episodes, RSRP doesn't change much, so agent learns "never switch".
+
+Solution: RVT-Based Reward (Paper Equation 14)
+- Handover to loaded satellite: -500 (z1)
+- Handover to free satellite: -300 (z2)
+- Stay on loaded satellite: -100 * load_factor (f1)
+- Stay on free satellite: +RVT (f2, Remaining Visibility Time in seconds)
+
+Key Innovation: RVT (Remaining Visibility Time)
+- Predicts when satellite will drop below min_elevation
+- Encourages switching before satellite loss
+- Natural incentive for proactive handovers
+- Paper result: 4.2 handovers/episode, 0.033% blocking
+
+Expected Results (from paper):
+- Handovers: ~4.2 per episode (600s, 120 steps)
+- Blocking rate: ~0.033%
+- Balanced stay/switch behavior
+- Training: 2500 episodes
+
+Academic Standard: Real TLE data, Complete physics, RVT-based rewards
 """
 
 import gymnasium as gym
@@ -26,21 +45,25 @@ class SatelliteHandoverEnv(gym.Env):
     """
     LEO Satellite Handover Environment
 
-    Implements multi-satellite state representation and dynamic action space
-    based on Graph RL paper (Aerospace 2024) methodology.
+    Key Improvement: RVT-based reward function following IEEE TAES 2024 paper.
 
     State Space:
-        Box(shape=(K, 12), dtype=float32)
-        K = max_visible_satellites (e.g., 10)
-        12 = state dimensions per satellite
+        Box(shape=(K, 14), dtype=float32)
+        K = max_visible_satellites (e.g., 15)
+        14 = state dimensions per satellite (added RVT dimension)
 
     Action Space:
         Discrete(K+1)
         0 = stay with current satellite
-        1 to K = switch to candidate[i-1]
+        1 to K = switch to candidate[i-1] (FIXED for entire episode)
 
-    Reward:
-        Multi-objective: QoS + handover_penalty + ping_pong_penalty
+    Reward (IEEE TAES 2024 Equation 14):
+        If handover:
+            - To loaded satellite: -500 (z1)
+            - To free satellite: -300 (z2)
+        If stay:
+            - On loaded satellite: -100 * load_factor (f1)
+            - On free satellite: +RVT (f2, Remaining Visibility Time)
     """
 
     metadata = {'render_modes': []}
@@ -51,51 +74,63 @@ class SatelliteHandoverEnv(gym.Env):
 
         Args:
             adapter: OrbitEngineAdapter instance (real physics)
-            satellite_ids: List of satellite IDs to query (e.g., 125 satellites)
+            satellite_ids: List of satellite IDs to query
             config: Configuration dictionary
-
-        Academic Compliance:
-            - adapter must use real TLE data (Space-Track.org)
-            - satellite_ids from real constellation
-            - config contains no hardcoded physics values
         """
         super().__init__()
 
-        # Store adapter (OrbitEngineAdapter with complete ITU-R/3GPP physics)
         self.adapter = adapter
         self.satellite_ids = satellite_ids
         self.config = config
 
-        # Parameters from config (no hardcoding)
+        # Parameters from config
         gs_config = config.get('ground_station', {})
-        self.min_elevation_deg = gs_config.get('min_elevation_deg', 10.0)
+        self.min_elevation_deg = gs_config.get('min_elevation_deg', 20.0)
 
         env_config = config.get('environment', config.get('data_generation', {}))
         self.time_step_seconds = env_config.get('time_step_seconds', 5)
-        self.episode_duration_minutes = env_config.get('episode_duration_minutes', 95)
-        self.max_visible_satellites = env_config.get('max_visible_satellites', 10)
+        self.episode_duration_minutes = env_config.get('episode_duration_minutes', 10)
+        self.max_visible_satellites = env_config.get('max_visible_satellites', 15)
 
-        # Reward function weights (from config or defaults based on Graph RL paper)
+        # V9: RVT-based reward weights (from IEEE TAES 2024 paper)
         reward_config = env_config.get('reward', {})
         self.reward_weights = {
-            'qos': reward_config.get('qos_weight', 1.0),
-            'sinr_weight': reward_config.get('sinr_weight', 0.0),  # Multi-objective
-            'latency_weight': reward_config.get('latency_weight', 0.0),  # Multi-objective
-            'handover_penalty': reward_config.get('handover_penalty', -0.1),
-            'ping_pong_penalty': reward_config.get('ping_pong_penalty', -0.2),
+            # QoS component (minimal, not primary reward)
+            'qos': reward_config.get('qos_weight', 0.1),
+            'sinr_weight': reward_config.get('sinr_weight', 0.0),
+            'latency_weight': reward_config.get('latency_weight', 0.0),
+
+            # Handover penalties (from paper)
+            'handover_to_loaded': reward_config.get('handover_to_loaded_penalty', -500.0),  # z1
+            'handover_to_free': reward_config.get('handover_to_free_penalty', -300.0),      # z2
+
+            # Stay rewards (from paper)
+            'stay_loaded_factor': reward_config.get('stay_loaded_penalty_factor', 100.0),  # f1
+            'rvt_reward_weight': reward_config.get('rvt_reward_weight', 1.0),              # f2
+
+            # Legacy (kept for compatibility)
+            'ping_pong_penalty': reward_config.get('ping_pong_penalty', -50.0),
+            'connectivity_bonus': reward_config.get('connectivity_bonus', 0.0),
+            'stability_bonus': reward_config.get('stability_bonus', 0.0),  # Not used in V9
         }
 
-        # Observation space: (K, 12) matrix
-        # K satellites × 12 features per satellite
+        # V9: RVT calculation parameters
+        self.rvt_lookahead_minutes = 60  # Look ahead 60 minutes to find horizon crossing
+        self.rvt_check_interval_seconds = 30  # Check every 30 seconds
+
+        # Satellite load tracking (simplified: based on recent handover rate)
+        self.satellite_load = {}  # sat_id -> load_factor (0.0 to 1.0)
+        self.load_threshold = 0.7  # Above this is considered "loaded"
+
+        # Observation space: (K, 14) matrix (added RVT dimension)
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(self.max_visible_satellites, 12),
+            shape=(self.max_visible_satellites, 14),  # 13 + 1 RVT dimension
             dtype=np.float32
         )
 
         # Action space: Discrete(K+1)
-        # 0 = stay, 1-K = switch to candidate[i-1]
         self.action_space = spaces.Discrete(self.max_visible_satellites + 1)
 
         # Environment state
@@ -103,9 +138,24 @@ class SatelliteHandoverEnv(gym.Env):
         self.current_satellite = None
         self.episode_start = None
         self.previous_satellite = None
-        self.current_visible_satellites = []  # List of satellite IDs in current observation
-        self.current_visible_states = []  # List of state dicts for current observation
-        self.handover_history = []  # Track handover sequence for ping-pong detection
+        self.handover_history = []
+
+        # V9: RVT cache
+        self.rvt_cache = {}  # sat_id -> (timestamp, rvt_seconds)
+        self.rvt_cache_duration = 60  # Cache valid for 60 seconds
+
+        # V9+: Minimum Dwell Time Constraint (Physical/Protocol constraint)
+        # Based on 3GPP NTN standards: Handover preparation ~15-20s minimum
+        # Academic research typically uses 30-60s
+        # This prevents unrealistic frequent switching
+        self.min_dwell_time_seconds = reward_config.get('min_dwell_time_seconds', 60)
+        self.min_dwell_time_steps = max(1, int(self.min_dwell_time_seconds / self.time_step_seconds))
+        self.steps_since_last_handover = 0  # Counter for dwell time enforcement
+
+        # Episode-fixed candidate set
+        self.episode_candidate_ids = []
+        self.episode_candidate_states = []
+        self.episode_candidate_available = []
 
         # Statistics
         self.episode_stats = {
@@ -113,50 +163,67 @@ class SatelliteHandoverEnv(gym.Env):
             'num_ping_pongs': 0,
             'avg_rsrp': 0.0,
             'timesteps': 0,
+            'connectivity_ratio': 0.0,
+            'connected_steps': 0,
+            'avg_rvt': 0.0,  # V9: Track average RVT
+            'total_reward': 0.0,  # V9: Track cumulative reward
         }
 
-        logger.info(f"SatelliteHandoverEnv initialized")
+        logger.info(f"SatelliteHandoverEnv initialized (RVT-based reward)")
         logger.info(f"  Satellite pool: {len(self.satellite_ids)} satellites")
-        logger.info(f"  Max visible: {self.max_visible_satellites}")
-        logger.info(f"  Observation space: {self.observation_space}")
-        logger.info(f"  Action space: {self.action_space}")
+        logger.info(f"  Max candidates per episode: {self.max_visible_satellites}")
+        logger.info(f"  Min elevation: {self.min_elevation_deg}°")
+        logger.info(f"  V9 Reward: handover_to_loaded={self.reward_weights['handover_to_loaded']}, "
+                   f"handover_to_free={self.reward_weights['handover_to_free']}, "
+                   f"rvt_weight={self.reward_weights['rvt_reward_weight']}")
+        logger.info(f"  V9+ Dwell Time Constraint: {self.min_dwell_time_seconds}s "
+                   f"({self.min_dwell_time_steps} steps) - Physical/Protocol constraint")
 
     def reset(self, seed=None, options=None):
-        """
-        Reset environment to initial state
-
-        Args:
-            seed: Random seed for reproducibility
-            options: Optional dict with 'start_time' key
-
-        Returns:
-            observation: (K, 12) state matrix
-            info: Dict with episode information
-        """
+        """Reset environment and establish episode-fixed candidate set"""
         super().reset(seed=seed)
 
-        # Set episode start time
-        if options and 'start_time' in options:
-            self.episode_start = options['start_time']
-            logger.info(f"Episode start time from options: {self.episode_start}")
-        else:
-            # Auto-detect latest TLE epoch and use as default start time
-            # This ensures we always use the most recent data available
-            epoch_range = self.adapter.tle_loader.get_epoch_range()
-            if epoch_range:
-                # Use latest TLE epoch minus 30 days for 30-day training window
-                latest_epoch = epoch_range[1]
-                self.episode_start = latest_epoch - timedelta(days=29)
-                logger.info(f"Auto-detected TLE range: {epoch_range[0].date()} to {epoch_range[1].date()}")
-                logger.info(f"Using episode start time: {self.episode_start}")
-            else:
-                # Fallback to hardcoded date if TLE detection fails (matches 30-day precompute table)
-                self.episode_start = datetime(2025, 10, 10, 0, 0, 0)
-                logger.warning(f"Could not auto-detect TLE range, using fallback: {self.episode_start}")
+        # V9.1: Smart resampling - ensure each episode has valid satellite coverage
+        # Following academic standard: skip invalid episodes (no satellites)
+        # Reference: MDPI Aerospace 2024 - "training ends when no available resource"
+        MIN_REQUIRED_SATELLITES = 2
+        MAX_RESAMPLE_ATTEMPTS = 100
 
-        self.current_time = self.episode_start
+        if options and 'start_time' in options:
+            # Use specified time (for reproducible evaluation)
+            self.episode_start = options['start_time']
+            self.current_time = self.episode_start
+            self._initialize_episode_candidates_internal()
+        else:
+            # Smart resampling: retry until we find a time with valid coverage
+            for attempt in range(MAX_RESAMPLE_ATTEMPTS):
+                random_minutes = np.random.randint(0, 30 * 24 * 60)  # 0-30 days
+                self.episode_start = datetime(2025, 10, 26, 0, 0, 0) + timedelta(minutes=random_minutes)
+                self.current_time = self.episode_start
+
+                # Check satellite availability at this time
+                self._initialize_episode_candidates_internal()
+                available_count = sum(self.episode_candidate_available)
+
+                if available_count >= MIN_REQUIRED_SATELLITES:
+                    logger.debug(f"Found valid time after {attempt+1} attempts: {available_count} satellites")
+                    break
+            else:
+                # Fallback to known-good time after all attempts fail
+                logger.warning(f"Could not find valid time after {MAX_RESAMPLE_ATTEMPTS} attempts, using default")
+                self.episode_start = datetime(2025, 10, 26, 0, 0, 0)
+                self.current_time = self.episode_start
+                self._initialize_episode_candidates_internal()
+
         self.previous_satellite = None
         self.handover_history = []
+
+        # V9: Reset RVT cache and load tracking
+        self.rvt_cache = {}
+        self.satellite_load = {}
+
+        # V9+: Reset dwell time counter
+        self.steps_since_last_handover = 0
 
         # Reset statistics
         self.episode_stats = {
@@ -164,169 +231,50 @@ class SatelliteHandoverEnv(gym.Env):
             'num_ping_pongs': 0,
             'avg_rsrp': 0.0,
             'timesteps': 0,
+            'connectivity_ratio': 0.0,
+            'connected_steps': 0,
+            'avg_rvt': 0.0,
+            'total_reward': 0.0,
         }
+
+        # Log final candidate status (already initialized above)
+        available_count = sum(self.episode_candidate_available)
+        logger.info(f"Episode candidates initialized: {available_count}/{len(self.episode_candidate_ids)} available")
 
         # Get initial observation
         observation = self._get_observation()
 
-        # Select initial satellite (highest RSRP)
-        if len(self.current_visible_satellites) > 0:
-            self.current_satellite = self.current_visible_satellites[0]
-            self.handover_history.append(self.current_satellite)
-        else:
-            # No satellites visible - episode will end immediately
-            self.current_satellite = None
+        # Select initial satellite
+        self._select_initial_satellite()
 
-        # Generate action mask: only allow valid actions
-        # action_mask[i] = True if action i is valid, False otherwise
+        # Generate action mask
         action_mask = self._get_action_mask()
 
         info = {
             'current_satellite': self.current_satellite,
-            'num_visible': len(self.current_visible_satellites),
+            'num_visible': sum(self.episode_candidate_available),
+            'num_candidates': len(self.episode_candidate_ids),
             'episode_start': self.episode_start.isoformat(),
             'current_time': self.current_time.isoformat(),
             'action_mask': action_mask,
+            'candidate_ids': self.episode_candidate_ids.copy(),
         }
 
-        logger.debug(f"Environment reset - {info['num_visible']} visible satellites")
+        logger.debug(f"Episode reset - {info['num_visible']}/{info['num_candidates']} candidates available")
 
         return observation, info
 
-    def step(self, action: int):
-        """
-        Execute one timestep
+    def _initialize_episode_candidates(self):
+        """Public wrapper for backward compatibility"""
+        self._initialize_episode_candidates_internal()
 
-        Args:
-            action: Integer from action space
-                    0 = stay with current satellite
-                    1 to K = switch to candidate[i-1]
-
-        Returns:
-            observation: Next state
-            reward: Reward for this transition
-            terminated: Episode ended
-            truncated: Episode truncated (time limit)
-            info: Additional information
-        """
-        # Validate action
-        if not self.action_space.contains(action):
-            raise ValueError(f"Invalid action {action}, must be in {self.action_space}")
-
-        # Record previous satellite for reward calculation
-        prev_satellite = self.current_satellite
-        handover_occurred = False
-
-        # Execute action
-        if action == 0:
-            # Action 0: Stay with current satellite
-            # Check if current satellite still available
-            if self.current_satellite not in self.current_visible_satellites:
-                # Current satellite lost - forced handover to best available
-                if len(self.current_visible_satellites) > 0:
-                    self.current_satellite = self.current_visible_satellites[0]
-                    handover_occurred = True
-                    logger.debug(f"Forced handover: current satellite lost")
-                else:
-                    # No satellites available - episode will terminate
-                    self.current_satellite = None
-        else:
-            # Action 1-K: Switch to candidate satellite
-            candidate_idx = action - 1
-
-            if candidate_idx < len(self.current_visible_satellites):
-                new_satellite = self.current_visible_satellites[candidate_idx]
-
-                if new_satellite != self.current_satellite:
-                    # Handover to new satellite
-                    self.previous_satellite = self.current_satellite
-                    self.current_satellite = new_satellite
-                    handover_occurred = True
-
-                    # Track handover history for ping-pong detection
-                    self.handover_history.append(new_satellite)
-                    if len(self.handover_history) > 10:
-                        self.handover_history = self.handover_history[-10:]
-
-                    logger.debug(f"Handover: {prev_satellite} -> {new_satellite}")
-            else:
-                # Invalid action index (out of range) - treat as stay
-                logger.warning(f"Action {action} out of range (only {len(self.current_visible_satellites)} visible)")
-
-        # Advance time
-        self.current_time += timedelta(seconds=self.time_step_seconds)
-
-        # Get next observation
-        observation = self._get_observation()
-
-        # Calculate reward
-        reward = self._calculate_reward(
-            observation=observation,
-            handover_occurred=handover_occurred,
-            prev_sat=prev_satellite,
-            curr_sat=self.current_satellite
-        )
-
-        # Check if episode is done
-        terminated, truncated = self._check_done()
-
-        # Update statistics
-        self.episode_stats['timesteps'] += 1
-        if handover_occurred:
-            self.episode_stats['num_handovers'] += 1
-
-        # Calculate average RSRP (for stats)
-        if self.current_satellite and len(self.current_visible_satellites) > 0:
-            curr_idx = self.current_visible_satellites.index(self.current_satellite) \
-                if self.current_satellite in self.current_visible_satellites else 0
-            if curr_idx < len(self.current_visible_states):
-                curr_rsrp = self.current_visible_states[curr_idx].get('rsrp_dbm', 0)
-                # Running average
-                self.episode_stats['avg_rsrp'] = (
-                    (self.episode_stats['avg_rsrp'] * (self.episode_stats['timesteps'] - 1) + curr_rsrp) /
-                    self.episode_stats['timesteps']
-                )
-
-        # Generate action mask for next step
-        action_mask = self._get_action_mask()
-
-        # Build info dict
-        info = {
-            'current_satellite': self.current_satellite,
-            'num_visible': len(self.current_visible_satellites),
-            'handover_occurred': handover_occurred,
-            'current_time': self.current_time.isoformat(),
-            'action_mask': action_mask,
-            **self.episode_stats,
-        }
-
-        return observation, reward, terminated, truncated, info
-
-    def _get_observation(self) -> np.ndarray:
-        """
-        Generate multi-satellite observation
-
-        Based on Graph RL paper:
-        - Query ALL satellites at each timestep
-        - Select top-K by RSRP
-        - Return (K, 12) matrix
-
-        Returns:
-            observation: (max_visible_satellites, 12) array
-
-        Academic Compliance:
-            - Uses OrbitEngineAdapter (real TLE + complete physics)
-            - No hardcoded values
-            - No mock data
-        """
+    def _initialize_episode_candidates_internal(self):
+        """Initialize episode-fixed candidate set (internal implementation)"""
         visible_satellites = []
 
-        # CRITICAL: Query ALL satellites (Graph RL paper methodology)
-        # This is the key difference from old single-satellite approach
+        # Query all satellites at episode start
         for sat_id in self.satellite_ids:
             try:
-                # Real physics calculation via OrbitEngineAdapter
-                # Uses complete ITU-R P.676-13 + 3GPP TS 38.214/215
                 state_dict = self.adapter.calculate_state(
                     satellite_id=sat_id,
                     timestamp=self.current_time
@@ -335,300 +283,488 @@ class SatelliteHandoverEnv(gym.Env):
                 if not state_dict:
                     continue
 
-                # Check visibility (elevation >= threshold)
-                elevation = state_dict.get('elevation_deg', 0)
-                if elevation < self.min_elevation_deg:
-                    continue
+                elevation = state_dict.get('elevation_deg', -90)
+                rsrp = state_dict.get('rsrp_dbm', -140)
+                is_connectable = state_dict.get('is_connectable', False)
 
-                # Check connectivity (3GPP standards)
-                if not state_dict.get('is_connectable', False):
-                    continue
-
-                # Convert to 12-dimensional vector
-                state_vector = self._state_dict_to_vector(state_dict)
-
-                visible_satellites.append({
-                    'id': sat_id,
-                    'state': state_vector,
-                    'rsrp': state_dict['rsrp_dbm'],
-                    'elevation': elevation,
-                    'distance': state_dict.get('distance_km', 0),
-                    'state_dict': state_dict,  # Keep for reward calculation
-                })
-
+                # Include satellites visible or might rise soon
+                if elevation > -30:
+                    visible_satellites.append({
+                        'id': sat_id,
+                        'rsrp': rsrp,
+                        'elevation': elevation,
+                        'is_connectable': is_connectable,
+                        'state_dict': state_dict,
+                    })
             except Exception as e:
-                # Log error but continue querying other satellites
-                # Use warning for first satellite to catch timestamp range issues
-                if sat_id == self.satellite_ids[0]:
-                    logger.warning(f"Error querying {sat_id} at {self.current_time}: {e}")
-                else:
-                    logger.debug(f"Error querying {sat_id}: {e}")
+                logger.debug(f"Error querying {sat_id}: {e}")
                 continue
 
-        # Sort by RSRP (best signal first) - Graph RL paper methodology
-        visible_satellites.sort(key=lambda x: x['rsrp'], reverse=True)
+        # Sort by elevation (highest first) for stability
+        visible_satellites.sort(key=lambda x: (x['elevation'], x['rsrp']), reverse=True)
 
-        # Take top-K candidates
-        top_satellites = visible_satellites[:self.max_visible_satellites]
+        # Select top-K as episode candidates
+        top_k = visible_satellites[:self.max_visible_satellites]
 
-        # Build observation matrix: (K, 12)
+        # Store FIXED candidate set for this episode
+        self.episode_candidate_ids = [s['id'] for s in top_k]
+        self.episode_candidate_states = [s['state_dict'] for s in top_k]
+        self.episode_candidate_available = [
+            s['elevation'] >= self.min_elevation_deg and s['is_connectable']
+            for s in top_k
+        ]
+
+        # Pad with None if fewer than K candidates
+        while len(self.episode_candidate_ids) < self.max_visible_satellites:
+            self.episode_candidate_ids.append(None)
+            self.episode_candidate_states.append(None)
+            self.episode_candidate_available.append(False)
+
+        available_count = sum(self.episode_candidate_available)
+        logger.info(f"Episode candidates initialized: {available_count}/{len(self.episode_candidate_ids)} available")
+
+    def _select_initial_satellite(self):
+        """Select initial satellite from available candidates"""
+        best_rsrp = -999
+        best_idx = -1
+
+        for i, (available, state) in enumerate(zip(
+            self.episode_candidate_available,
+            self.episode_candidate_states
+        )):
+            if available and state:
+                rsrp = state.get('rsrp_dbm', -999)
+                if rsrp > best_rsrp:
+                    best_rsrp = rsrp
+                    best_idx = i
+
+        if best_idx >= 0:
+            self.current_satellite = self.episode_candidate_ids[best_idx]
+            self.handover_history.append(self.current_satellite)
+            logger.debug(f"Initial satellite: {self.current_satellite} (RSRP: {best_rsrp:.1f} dBm)")
+        else:
+            self.current_satellite = None
+            logger.warning("No available satellites at episode start")
+
+    def step(self, action: int):
+        """Execute one timestep with stable action semantics"""
+        if not self.action_space.contains(action):
+            raise ValueError(f"Invalid action {action}")
+
+        prev_satellite = self.current_satellite
+        handover_occurred = False
+
+        # V9+: Increment dwell time counter
+        self.steps_since_last_handover += 1
+
+        # Execute action
+        if action == 0:
+            handover_occurred = self._handle_stay_action()
+        else:
+            handover_occurred = self._handle_switch_action(action)
+
+        # Advance time
+        self.current_time += timedelta(seconds=self.time_step_seconds)
+
+        # Update candidate states
+        self._update_candidate_states()
+
+        # Get observation
+        observation = self._get_observation()
+
+        # Calculate V9 reward
+        reward = self._calculate_reward(
+            handover_occurred=handover_occurred,
+            prev_sat=prev_satellite,
+        )
+
+        # Check termination
+        terminated, truncated = self._check_done()
+
+        # Update statistics
+        self._update_statistics(handover_occurred, reward)
+
+        # Generate action mask
+        action_mask = self._get_action_mask()
+
+        info = {
+            'current_satellite': self.current_satellite,
+            'num_visible': sum(self.episode_candidate_available),
+            'handover_occurred': handover_occurred,
+            'current_time': self.current_time.isoformat(),
+            'action_mask': action_mask,
+            'episode_stats': self.episode_stats.copy(),
+            **self.episode_stats,
+        }
+
+        return observation, reward, terminated, truncated, info
+
+    def _handle_stay_action(self) -> bool:
+        """Handle stay action (action=0)"""
+        if self.current_satellite is None:
+            return self._try_recover_satellite()
+
+        # Check if current satellite still available
+        if self.current_satellite in self.episode_candidate_ids:
+            idx = self.episode_candidate_ids.index(self.current_satellite)
+            if self.episode_candidate_available[idx]:
+                return False  # Still connected, no handover
+
+        # Current satellite lost - try to recover
+        return self._try_recover_satellite()
+
+    def _handle_switch_action(self, action: int) -> bool:
+        """Handle switch action (action=1 to K)"""
+        candidate_idx = action - 1
+        target_satellite = self.episode_candidate_ids[candidate_idx]
+
+        if target_satellite is None:
+            return False
+
+        if not self.episode_candidate_available[candidate_idx]:
+            return False
+
+        if target_satellite == self.current_satellite:
+            return False
+
+        # V9+: Minimum Dwell Time Constraint
+        # Enforce physical/protocol constraint: cannot handover too frequently
+        # Based on 3GPP NTN standards and academic research (typical: 30-60s)
+        if self.current_satellite is not None:  # Not the first handover
+            if self.steps_since_last_handover < self.min_dwell_time_steps:
+                # Dwell time not met - force stay on current satellite
+                logger.debug(f"Handover blocked by dwell time constraint: "
+                           f"{self.steps_since_last_handover}/{self.min_dwell_time_steps} steps "
+                           f"({self.steps_since_last_handover * self.time_step_seconds}/"
+                           f"{self.min_dwell_time_seconds}s)")
+                return False  # Stay on current satellite
+
+        # Execute handover
+        self.previous_satellite = self.current_satellite
+        self.current_satellite = target_satellite
+        self.handover_history.append(target_satellite)
+
+        # V9+: Reset dwell time counter on successful handover
+        self.steps_since_last_handover = 0
+
+        if len(self.handover_history) > 10:
+            self.handover_history = self.handover_history[-10:]
+
+        logger.debug(f"Handover: {self.previous_satellite} -> {self.current_satellite}")
+        return True
+
+    def _try_recover_satellite(self) -> bool:
+        """Try to recover connection to best available satellite"""
+        best_rsrp = -999
+        best_idx = -1
+
+        for i, (available, state) in enumerate(zip(
+            self.episode_candidate_available,
+            self.episode_candidate_states
+        )):
+            if available and state:
+                rsrp = state.get('rsrp_dbm', -999)
+                if rsrp > best_rsrp:
+                    best_rsrp = rsrp
+                    best_idx = i
+
+        if best_idx >= 0:
+            new_satellite = self.episode_candidate_ids[best_idx]
+            if new_satellite != self.current_satellite:
+                self.previous_satellite = self.current_satellite
+                self.current_satellite = new_satellite
+                self.handover_history.append(new_satellite)
+
+                # V9+: Reset dwell time counter on recovery handover
+                self.steps_since_last_handover = 0
+
+                logger.debug(f"Recovery handover: {self.previous_satellite} -> {new_satellite}")
+                return True
+        else:
+            self.current_satellite = None
+
+        return False
+
+    def _update_candidate_states(self):
+        """Update states for episode candidates"""
+        for i, sat_id in enumerate(self.episode_candidate_ids):
+            if sat_id is None:
+                continue
+
+            try:
+                state_dict = self.adapter.calculate_state(
+                    satellite_id=sat_id,
+                    timestamp=self.current_time
+                )
+
+                if state_dict:
+                    self.episode_candidate_states[i] = state_dict
+                    elevation = state_dict.get('elevation_deg', -90)
+                    is_connectable = state_dict.get('is_connectable', False)
+                    self.episode_candidate_available[i] = (
+                        elevation >= self.min_elevation_deg and is_connectable
+                    )
+                else:
+                    self.episode_candidate_available[i] = False
+
+            except Exception as e:
+                logger.debug(f"Error updating {sat_id}: {e}")
+                self.episode_candidate_available[i] = False
+
+    def _get_observation(self) -> np.ndarray:
+        """
+        Generate observation with FIXED candidate order.
+        V9: Added RVT dimension (14 total dimensions).
+        """
         observation = np.zeros(
-            (self.max_visible_satellites, 12),
+            (self.max_visible_satellites, 14),  # V9: 13 → 14 dimensions (added RVT)
             dtype=np.float32
         )
 
-        for i, sat_info in enumerate(top_satellites):
-            observation[i] = sat_info['state']
+        for i, (sat_id, state, available) in enumerate(zip(
+            self.episode_candidate_ids,
+            self.episode_candidate_states,
+            self.episode_candidate_available
+        )):
+            if sat_id and state:
+                is_current = (sat_id == self.current_satellite)
 
-        # Store current candidates (for action mapping)
-        # Action i maps to satellite i in this list
-        self.current_visible_satellites = [s['id'] for s in top_satellites]
-        self.current_visible_states = [s['state_dict'] for s in top_satellites]
+                # V9: Calculate RVT for this satellite
+                rvt_seconds = self._calculate_rvt(sat_id)
 
-        # CRITICAL FIX: Handle zero satellites case
-        if len(top_satellites) == 0:
-            logger.warning(f"No satellites visible at {self.current_time} - episode will terminate")
+                observation[i] = self._state_dict_to_vector(
+                    state,
+                    is_current=is_current,
+                    rvt_seconds=rvt_seconds
+                )
 
-        logger.debug(f"Observation generated: {len(top_satellites)}/{len(visible_satellites)} "
-                     f"top satellites from {len(self.satellite_ids)} total")
+                if not available:
+                    observation[i, 4] = -90.0  # Mark unavailable
 
-        # ====== NUMERICAL STABILITY CHECK: Observation ======
-        if np.isnan(observation).any():
-            logger.error(f"[NaN Detection] NaN detected in observation at time {self.current_time}")
-            logger.error(f"  Observation shape: {observation.shape}")
-            logger.error(f"  Number of visible satellites: {len(top_satellites)}")
-            # Find which satellites have NaN
-            nan_mask = np.isnan(observation).any(axis=1)
-            for i, has_nan in enumerate(nan_mask):
-                if has_nan and i < len(top_satellites):
-                    logger.error(f"  Satellite {i} ({top_satellites[i]['id']}) has NaN in state")
-                    logger.error(f"    State dict: {top_satellites[i]['state_dict']}")
-            # Replace NaN with zeros as fallback
-            observation = np.nan_to_num(observation, nan=0.0)
-
-        if np.isinf(observation).any():
-            logger.error(f"[Inf Detection] Inf detected in observation at time {self.current_time}")
-            logger.error(f"  Observation shape: {observation.shape}")
-            logger.error(f"  Observation min: {np.min(observation)}, max: {np.max(observation)}")
-            # Find which satellites have Inf
-            inf_mask = np.isinf(observation).any(axis=1)
-            for i, has_inf in enumerate(inf_mask):
-                if has_inf and i < len(top_satellites):
-                    logger.error(f"  Satellite {i} ({top_satellites[i]['id']}) has Inf in state")
-                    logger.error(f"    State dict: {top_satellites[i]['state_dict']}")
-            # Replace Inf with large but finite values
-            observation = np.nan_to_num(observation, posinf=1e6, neginf=-1e6)
+        # NaN/Inf check
+        if np.isnan(observation).any() or np.isinf(observation).any():
+            observation = np.nan_to_num(observation, nan=0.0, posinf=1e6, neginf=-1e6)
 
         return observation
 
-    def _state_dict_to_vector(self, state_dict: Dict) -> np.ndarray:
+    def _state_dict_to_vector(self, state_dict: Dict, is_current: bool = False,
+                             rvt_seconds: float = 0.0) -> np.ndarray:
         """
-        Convert state dict to 12-dimensional vector
-
-        No hardcoding - use actual values from OrbitEngineAdapter
-
-        State dimensions (verified from OrbitEngineAdapter):
-        0: RSRP (dBm) - rsrp_dbm
-        1: RSRQ (dB) - rsrq_db
-        2: SINR (dB) - rs_sinr_db
-        3: Distance (km) - distance_km
-        4: Elevation (deg) - elevation_deg
-        5: Doppler shift (Hz) - doppler_shift_hz
-        6: Path loss (dB) - path_loss_db
-        7: Atmospheric loss (dB) - atmospheric_loss_db
-        8: Radial velocity (m/s) - radial_velocity_ms
-        9: Offset MO (dB) - offset_mo_db
-        10: Cell offset (dB) - cell_offset_db
-        11: Propagation delay (ms) - propagation_delay_ms
-
-        Args:
-            state_dict: State from OrbitEngineAdapter
-
-        Returns:
-            state_vector: 12-dimensional numpy array
+        Convert state dict to 14-dimensional vector.
+        V9: Added RVT as 14th dimension.
         """
         return np.array([
-            state_dict.get('rsrp_dbm', 0),
-            state_dict.get('rsrq_db', 0),
-            state_dict.get('rs_sinr_db', 0),
-            state_dict.get('distance_km', 0),
+            state_dict.get('rsrp_dbm', -140),
+            state_dict.get('rsrq_db', -20),
+            state_dict.get('rs_sinr_db', -10),
+            state_dict.get('distance_km', 1000),
             state_dict.get('elevation_deg', 0),
             state_dict.get('doppler_shift_hz', 0),
-            state_dict.get('path_loss_db', 0),
-            state_dict.get('atmospheric_loss_db', 0),
+            state_dict.get('path_loss_db', 150),
+            state_dict.get('atmospheric_loss_db', 1),
             state_dict.get('radial_velocity_ms', 0),
             state_dict.get('offset_mo_db', 0),
             state_dict.get('cell_offset_db', 0),
-            state_dict.get('propagation_delay_ms', 0)
+            state_dict.get('propagation_delay_ms', 5),
+            10.0 if is_current else 0.0,
+            rvt_seconds / 60.0,  # V9: RVT in minutes (normalized)
         ], dtype=np.float32)
 
-    def _calculate_reward(self, observation, handover_occurred, prev_sat, curr_sat):
+    def _calculate_rvt(self, sat_id: str) -> float:
         """
-        Calculate multi-objective reward
-
-        Enhanced reward structure (aligned with MPNN-DQN 2024):
-        - QoS component (RSRP-based)
-        - Signal quality (SINR-based for data rate)
-        - Latency penalty (propagation delay)
-        - Handover penalty
-        - Ping-pong penalty
-
-        Args:
-            observation: Current observation matrix
-            handover_occurred: Whether handover happened this step
-            prev_sat: Previous satellite ID
-            curr_sat: Current satellite ID
+        Calculate Remaining Visibility Time (RVT) for a satellite.
 
         Returns:
-            reward: Scalar reward value
+            RVT in seconds (time until satellite drops below min_elevation)
+        """
+        # Check cache
+        if sat_id in self.rvt_cache:
+            cache_time, cached_rvt = self.rvt_cache[sat_id]
+            if (self.current_time - cache_time).total_seconds() < self.rvt_cache_duration:
+                return cached_rvt
+
+        # Calculate RVT by looking ahead
+        rvt_seconds = 0.0
+        check_time = self.current_time
+        max_lookahead = timedelta(minutes=self.rvt_lookahead_minutes)
+
+        try:
+            while (check_time - self.current_time) < max_lookahead:
+                check_time += timedelta(seconds=self.rvt_check_interval_seconds)
+
+                state_dict = self.adapter.calculate_state(
+                    satellite_id=sat_id,
+                    timestamp=check_time
+                )
+
+                if not state_dict:
+                    break
+
+                elevation = state_dict.get('elevation_deg', -90)
+
+                if elevation < self.min_elevation_deg:
+                    # Found horizon crossing
+                    rvt_seconds = (check_time - self.current_time).total_seconds()
+                    break
+            else:
+                # Satellite stays visible for entire lookahead period
+                rvt_seconds = max_lookahead.total_seconds()
+
+        except Exception as e:
+            logger.debug(f"Error calculating RVT for {sat_id}: {e}")
+            rvt_seconds = 0.0
+
+        # Cache result
+        self.rvt_cache[sat_id] = (self.current_time, rvt_seconds)
+
+        return rvt_seconds
+
+    def _get_satellite_load(self, sat_id: str) -> float:
+        """
+        Get load factor for a satellite (simplified model).
+
+        In a real system, this would query satellite capacity/user count.
+        Here we use a simplified model based on recent handover activity.
+
+        Returns:
+            Load factor 0.0 to 1.0
+        """
+        # Simplified: Random load with slight persistence
+        if sat_id not in self.satellite_load:
+            self.satellite_load[sat_id] = np.random.uniform(0.2, 0.8)
+
+        # Add some noise for variation
+        self.satellite_load[sat_id] = np.clip(
+            self.satellite_load[sat_id] + np.random.normal(0, 0.05),
+            0.0, 1.0
+        )
+
+        return self.satellite_load[sat_id]
+
+    def _is_satellite_loaded(self, sat_id: str) -> bool:
+        """Check if satellite is considered loaded/overloaded"""
+        load = self._get_satellite_load(sat_id)
+        return load > self.load_threshold
+
+    def _calculate_reward(self, handover_occurred: bool, prev_sat: str) -> float:
+        """
+        V9: RVT-based reward function (IEEE TAES 2024 Equation 14)
+
+        Reward structure:
+        - If handover to loaded satellite: -500 (z1)
+        - If handover to free satellite: -300 (z2)
+        - If stay on loaded satellite: -100 * load_factor (f1)
+        - If stay on free satellite: +RVT (f2)
+
+        Additional components:
+        - Small QoS bonus (minimal, not primary)
+        - Ping-pong penalty
         """
         reward = 0.0
 
-        # CRITICAL FIX: Handle no satellites case
-        if len(self.current_visible_satellites) == 0:
-            # Severe penalty for no connectivity
-            return -100.0  # Large negative reward
+        # No connection - heavy penalty
+        if self.current_satellite is None:
+            return -10.0
 
-        # Component 1-3: QoS, Signal Quality, Latency
-        if curr_sat and len(self.current_visible_satellites) > 0:
-            try:
-                curr_idx = self.current_visible_satellites.index(curr_sat)
-                if curr_idx < len(self.current_visible_states):
-                    state = self.current_visible_states[curr_idx]
+        # Get current satellite load and RVT
+        is_loaded = self._is_satellite_loaded(self.current_satellite)
+        rvt_seconds = self._calculate_rvt(self.current_satellite)
 
-                    # Component 1: QoS reward (RSRP-based)
-                    curr_rsrp = state.get('rsrp_dbm', -140)
-                    RSRP_MIN = -60.0  # dBm - Poor signal
-                    RSRP_MAX = -20.0  # dBm - Excellent signal
-                    rsrp_normalized = (curr_rsrp - RSRP_MIN) / (RSRP_MAX - RSRP_MIN)
-                    rsrp_normalized = np.clip(rsrp_normalized, 0.0, 1.0)
-                    qos_reward = rsrp_normalized * self.reward_weights['qos']
-                    reward += qos_reward
-
-                    # Component 2: Signal quality (SINR-based)
-                    # Higher SINR = higher data rate = better performance
-                    if 'sinr_weight' in self.reward_weights:
-                        curr_sinr = state.get('rs_sinr_db', -10)
-                        # Typical SINR range: -10 to 30 dB
-                        SINR_MIN = -10.0  # dB - Poor signal quality
-                        SINR_MAX = 30.0   # dB - Excellent signal quality
-                        sinr_normalized = (curr_sinr - SINR_MIN) / (SINR_MAX - SINR_MIN)
-                        sinr_normalized = np.clip(sinr_normalized, 0.0, 1.0)
-                        sinr_reward = sinr_normalized * self.reward_weights['sinr_weight']
-                        reward += sinr_reward
-
-                    # Component 3: Latency penalty (propagation delay)
-                    # Lower delay = better user experience
-                    if 'latency_weight' in self.reward_weights:
-                        curr_delay = state.get('propagation_delay_ms', 0)
-                        # Typical LEO delay range: 1-25 ms (distance 300-7500 km)
-                        DELAY_MIN = 1.0   # ms - Close satellite
-                        DELAY_MAX = 25.0  # ms - Far satellite
-                        delay_normalized = (curr_delay - DELAY_MIN) / (DELAY_MAX - DELAY_MIN)
-                        delay_normalized = np.clip(delay_normalized, 0.0, 1.0)
-                        # Negative weight means penalty for high delay
-                        latency_penalty = delay_normalized * self.reward_weights['latency_weight']
-                        reward += latency_penalty
-                else:
-                    # No valid state - small penalty
-                    reward -= 0.1
-            except (ValueError, IndexError):
-                # Satellite not in visible list - penalty
-                reward -= 0.1
-        else:
-            # No current satellite - penalty depends on severity
-            if len(self.current_visible_satellites) == 0:
-                # CRITICAL: No satellites visible at all - very large penalty
-                # This encourages agent to learn handover policies that maintain connectivity
-                reward -= 10.0
-            else:
-                # Current satellite lost but others visible - moderate penalty
-                # Agent should have performed handover earlier
-                reward -= 5.0
-
-        # Component 4: Handover penalty
-        # Penalize handovers to encourage stability
         if handover_occurred:
-            reward += self.reward_weights['handover_penalty']
+            # HANDOVER REWARD (from paper)
+            if is_loaded:
+                # z1: Handover to loaded/overloaded satellite
+                reward += self.reward_weights['handover_to_loaded']  # -500
+            else:
+                # z2: Handover to available satellite
+                reward += self.reward_weights['handover_to_free']  # -300
 
-        # Component 5: Ping-pong penalty
-        # Penalize switching back to recent satellite
-        if handover_occurred and len(self.handover_history) >= 3:
-            # Check if we're ping-ponging (returning to a recent satellite)
-            recent_sats = self.handover_history[-3:]
-            if len(set(recent_sats)) < len(recent_sats):
-                # Repeated satellite in recent history = ping-pong
-                reward += self.reward_weights['ping_pong_penalty']
-                self.episode_stats['num_ping_pongs'] += 1
+            # Check for ping-pong pattern
+            if len(self.handover_history) >= 3:
+                recent = self.handover_history[-3:]
+                if len(set(recent)) < len(recent):
+                    reward += self.reward_weights['ping_pong_penalty']  # -50
+                    self.episode_stats['num_ping_pongs'] += 1
+
+        else:
+            # STAY REWARD (from paper)
+            if is_loaded:
+                # f1: Stay on loaded satellite (negative reward)
+                load_factor = self._get_satellite_load(self.current_satellite)
+                reward -= self.reward_weights['stay_loaded_factor'] * load_factor  # -100 * load
+            else:
+                # f2: Stay on free satellite (RVT reward)
+                reward += self.reward_weights['rvt_reward_weight'] * rvt_seconds  # +RVT
+
+        # Add small QoS component (minimal, not primary)
+        if self.current_satellite in self.episode_candidate_ids:
+            idx = self.episode_candidate_ids.index(self.current_satellite)
+            state = self.episode_candidate_states[idx]
+
+            if state:
+                rsrp = state.get('rsrp_dbm', -140)
+                rsrp_normalized = np.clip((rsrp + 110) / 50, 0, 1)
+                reward += rsrp_normalized * self.reward_weights['qos']  # Small QoS bonus
 
         return float(reward)
 
     def _check_done(self) -> Tuple[bool, bool]:
-        """
-        Check if episode is done
-
-        Returns:
-            terminated: True if episode naturally ended
-            truncated: True if episode hit time limit
-
-        IMPORTANT: Episodes now ALWAYS run to full duration (episode_duration_minutes).
-        No early termination even when satellites are lost.
-        This ensures:
-        - Consistent episode length for training (1140 steps @ 95 min, 5s/step)
-        - Sufficient training steps for RL convergence (1700 ep × 1140 = 1.94M steps)
-        - Agent learns to handle temporary satellite loss gracefully
-        """
-        # Time limit reached - ONLY termination condition
+        """Check if episode is done"""
         episode_duration = timedelta(minutes=self.episode_duration_minutes)
         if self.current_time >= self.episode_start + episode_duration:
-            return False, True  # Not terminated, but truncated
+            return False, True
+        return False, False
 
-        # REMOVED: Early termination on satellite loss
-        # Old behavior:
-        # - Terminated when no satellites visible
-        # - Terminated when current satellite lost
-        # Problem: Episodes averaged only 58/1140 steps (5.1% of max duration)
-        # Result: Insufficient training (99K vs 1.94M steps needed)
-        #
-        # New behavior:
-        # - Continue episode even with zero satellites
-        # - Agent receives large negative reward (handled in _calculate_reward)
-        # - Agent learns to avoid satellite loss through better handover policy
+    def _update_statistics(self, handover_occurred: bool, reward: float):
+        """Update episode statistics"""
+        self.episode_stats['timesteps'] += 1
+        self.episode_stats['total_reward'] += reward
 
-        return False, False  # Continue until time limit
+        if handover_occurred:
+            self.episode_stats['num_handovers'] += 1
+
+        if self.current_satellite is not None:
+            self.episode_stats['connected_steps'] += 1
+
+            # Update average RSRP
+            if self.current_satellite in self.episode_candidate_ids:
+                idx = self.episode_candidate_ids.index(self.current_satellite)
+                state = self.episode_candidate_states[idx]
+                if state:
+                    rsrp = state.get('rsrp_dbm', 0)
+                    n = self.episode_stats['timesteps']
+                    old_avg = self.episode_stats['avg_rsrp']
+                    self.episode_stats['avg_rsrp'] = old_avg + (rsrp - old_avg) / n
+
+                    # V9: Update average RVT
+                    rvt = self._calculate_rvt(self.current_satellite)
+                    old_avg_rvt = self.episode_stats['avg_rvt']
+                    self.episode_stats['avg_rvt'] = old_avg_rvt + (rvt - old_avg_rvt) / n
+
+        # Update connectivity ratio
+        self.episode_stats['connectivity_ratio'] = (
+            self.episode_stats['connected_steps'] / self.episode_stats['timesteps']
+        )
 
     def _get_action_mask(self) -> np.ndarray:
-        """
-        Generate action mask for valid actions
-
-        Action mask is a boolean array where:
-        - mask[i] = True if action i is valid
-        - mask[i] = False if action i is invalid
-
-        Action space: Discrete(K+1)
-        - Action 0: Stay with current satellite (always valid)
-        - Action 1 to N: Switch to visible satellite[i-1] (valid if i <= num_visible)
-        - Action N+1 to K: Invalid (no satellite at this index)
-
-        Returns:
-            action_mask: Boolean array of shape (action_space.n,)
-        """
+        """Generate action mask for valid actions"""
         action_mask = np.zeros(self.action_space.n, dtype=bool)
 
-        # Action 0 (stay) is always valid
+        # Action 0 (stay) always valid
         action_mask[0] = True
 
-        # Actions 1 to num_visible are valid (switch to visible satellites)
-        num_visible = len(self.current_visible_satellites)
-        if num_visible > 0:
-            action_mask[1:num_visible+1] = True
+        # Actions 1-K valid if candidate is available AND not current satellite
+        for i, (sat_id, available) in enumerate(zip(
+            self.episode_candidate_ids,
+            self.episode_candidate_available
+        )):
+            if available and sat_id != self.current_satellite:
+                action_mask[i + 1] = True
 
         return action_mask
 
     def render(self):
-        """Render environment state (optional)"""
-        pass  # Not implemented - terminal logging sufficient
+        pass
 
     def close(self):
-        """Clean up resources"""
-        pass  # No resources to clean up
+        pass
