@@ -4,12 +4,13 @@
 # Minimal, production-ready dependencies
 #
 # Python Version: 3.10+
-# Last Updated: 2024-11-24
+# Last Updated: 2025-12-03
 #
 # Quick Setup:
 #   python3 -m venv venv
 #   source venv/bin/activate
 #   pip install -r requirements.txt
+#   pip install -e ../orbit-engine  # Install orbit-engine in editable mode
 
 # ============================================================================
 # Core Scientific Computing
@@ -19,7 +20,6 @@ scipy>=1.10.0
 pandas>=2.0.0
 h5py>=3.8.0
 PyYAML>=6.0
-pydantic>=2.0.0
 psutil>=5.9.0
 tqdm>=4.65.0
 
@@ -37,22 +37,17 @@ sgp4>=2.21
 torch>=2.0.0
 
 # Reinforcement Learning (Modern API)
-gymnasium>=1.0.0        # Successor to OpenAI gym, actively maintained
+gymnasium>=0.29.0       # Standard RL environment interface
+stable-baselines3>=2.0.0  # High-quality RL algorithm implementations (DQN)
 
 # ============================================================================
 # Visualization & Logging
 # ============================================================================
 matplotlib>=3.7.0
 seaborn>=0.12.0         # Statistical visualization
-tensorboard>=2.13.0     # Training metrics logging
-
-# ============================================================================
-# Real-time Monitoring API
-# ============================================================================
-fastapi>=0.104.0        # Modern async API framework
-uvicorn[standard]>=0.24.0 # ASGI server for FastAPI
+tensorboard>=2.13.0     # Training metrics logging (optional)
 
 # ============================================================================
 # Testing
 # ============================================================================
-pytest>=7.0.0           # Test framework (tests/scripts/)
+pytest>=7.0.0           # Test framework (tests/)

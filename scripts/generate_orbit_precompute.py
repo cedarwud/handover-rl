@@ -154,7 +154,7 @@ def get_satellite_ids(limit=None):
         constellation_filter='starlink',
         return_metadata=True,
         use_rl_training_data=False,   # Use standard stage4 output path
-        use_candidate_pool=False       # Use optimized pool (not candidate pool)
+        use_candidate_pool=True        # Use candidate pool (~3000 sats) for long-term coverage
     )
 
     logger.info(f"  Total from optimized pool: {len(satellite_ids)}")

@@ -167,7 +167,7 @@ class OrbitPrecomputeTable:
         state['tle_epoch'] = self.tle_epoch_start.isoformat()
         state['is_connectable'] = (
             not np.isnan(state['elevation_deg']) and
-            state['elevation_deg'] >= 10.0  # Assuming 10° min elevation
+            state['elevation_deg'] >= 0.0  # 0° for maximum coverage (matches diagnostic_config.yaml)
         )
 
         return state
