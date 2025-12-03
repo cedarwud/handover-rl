@@ -22,6 +22,7 @@ h5py>=3.8.0
 PyYAML>=6.0
 psutil>=5.9.0
 tqdm>=4.65.0
+rich>=13.0.0              # Terminal formatting for progress bars
 
 # ============================================================================
 # Orbit Mechanics (used by orbit-engine adapter)
