@@ -189,7 +189,7 @@ Generate the orbit precompute table. This is a **one-time operation** that pre-c
 
 **Option A: 30-day table (Recommended for full training)**
 ```bash
-python tools/orbit/generate_orbit_precompute.py \
+python scripts/generate_orbit_precompute.py \
   --start-time "2025-10-26 00:00:00" \
   --end-time "2025-11-25 23:59:59" \
   --output data/orbit_precompute_30days_optimized.h5 \
@@ -199,7 +199,7 @@ python tools/orbit/generate_orbit_precompute.py \
 
 **Option B: 7-day table (Quick testing, ~7 minutes)**
 ```bash
-python tools/orbit/generate_orbit_precompute.py \
+python scripts/generate_orbit_precompute.py \
   --start-time "2025-10-26 00:00:00" \
   --end-time "2025-11-02 00:00:00" \
   --output data/orbit_precompute_7days.h5 \
@@ -646,7 +646,7 @@ Training: **5 seeds × 2500 episodes** (~2 hours total)
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `tools/orbit/generate_orbit_precompute.py` | Generate HDF5 precompute tables | `python tools/orbit/generate_orbit_precompute.py --start-time "2025-10-26 00:00:00" --end-time "2025-11-25 23:59:59"` |
+| `scripts/generate_orbit_precompute.py` | Generate HDF5 precompute tables | `python scripts/generate_orbit_precompute.py --start-time "2025-10-26 00:00:00" --end-time "2025-11-25 23:59:59"` |
 | `tools/orbit/verify_precompute.py` | Verify table integrity | `python tools/orbit/verify_precompute.py --table data/orbit_precompute_30days.h5` |
 | `tools/orbit/inspect_precompute.py` | Inspect table contents | `python tools/orbit/inspect_precompute.py --table data/orbit_precompute_30days.h5` |
 
