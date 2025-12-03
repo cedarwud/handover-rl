@@ -81,7 +81,7 @@ handover-rl/
 │   │   ├── orbit_precompute_generator.py  # Precompute table generator
 │   │   └── orbit_precompute_table.py      # Precompute table query
 │   ├── environments/               # RL environments
-│   │   └── satellite_handover_env_v9.py   # Main environment (RVT-based)
+│   │   └── satellite_handover_env.py   # Main environment (RVT-based)
 │   └── utils/                      # Utilities
 │       ├── satellite_utils.py      # Satellite selection & management
 │       └── safety_mechanisms.py    # Training safety checks
@@ -132,6 +132,29 @@ handover-rl/
 
 ### Setup Steps
 
+**Option A: Automated Setup (Recommended)**
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/yourusername/handover-rl.git
+cd handover-rl
+
+# 2. Ensure orbit-engine is installed in parallel directory
+ls ../orbit-engine  # Should exist
+
+# 3. Run automated setup script
+./setup_env.sh
+```
+
+The `setup_env.sh` script will:
+- Check Python version (3.10+ required, 3.12+ recommended)
+- Verify orbit-engine integration
+- Create virtual environment
+- Install all dependencies
+- Verify installation
+
+**Option B: Manual Setup**
+
 ```bash
 # 1. Clone the repository
 git clone https://github.com/yourusername/handover-rl.git
@@ -151,7 +174,7 @@ pip install -r requirements.txt
 pip install -e ../orbit-engine
 
 # 6. Verify installation
-python -c "import src.environments.satellite_handover_env_v9; print('✓ Installation successful')"
+python -c "import src.environments; print('✓ Installation successful')"
 ```
 
 ---
