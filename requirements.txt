@@ -30,6 +30,7 @@ tqdm>=4.65.0
 astropy>=5.2.0
 skyfield>=1.45
 sgp4>=2.21
+itur>=0.4.0              # ITU-R atmospheric model (orbit-engine dependency)
 
 # ============================================================================
 # Deep Learning & RL
