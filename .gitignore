@@ -48,10 +48,14 @@ output/
 data/
 !data/.gitkeep
 !data/README.md
+!data/satellite_ids_from_precompute.txt
 
 # Logs
 logs/
 *.log
+
+# Training results (specific to each run, not tracked)
+TRAINING_RESULTS.md
 
 # ==========================================
 # Results (Partial Tracking)
@@ -125,6 +129,13 @@ coverage.xml
 *.orig
 temp/
 tmp/
+
+# ==========================================
+# Utility Scripts (Tracked)
+# ==========================================
+# Monitor scripts are tracked for reproducibility
+# !monitor_*.sh
+# !run_*.sh
 
 # ==========================================
 # Documentation Build
