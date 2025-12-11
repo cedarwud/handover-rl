@@ -103,9 +103,9 @@ handover-rl/
 │   ├── test_environment.py         # Environment functionality tests
 │   └── test_dwell_time.py          # Dwell time constraint tests
 │
-├── data/                           # Data files
-│   ├── orbit_precompute_30days_optimized.h5  # Precompute table
-│   └── satellite_ids_from_precompute.txt     # Satellite pool (125 sats)
+├── data/                           # Data files (generated, not in git)
+│   ├── orbit_precompute_30days.h5            # Precompute table (~2.6GB)
+│   └── satellite_ids_from_precompute.txt     # Satellite pool (102 sats)
 │
 ├── train_sb3.py                    # Main training script (SB3)
 ├── output/                         # Training output (models, logs)
@@ -120,106 +120,92 @@ handover-rl/
 ### Prerequisites
 
 **Software Requirements:**
-- Python 3.10 or higher
-- [orbit-engine](https://github.com/yourusername/orbit-engine) installed at `../orbit-engine`
+- Python 3.10 or higher (3.12 recommended)
+- [orbit-engine](../orbit-engine) - Physics simulation engine (sibling directory)
 - Git, GCC/Clang compiler
 
 **Hardware Requirements:**
-- RAM: 8GB minimum (16GB recommended)
-- CPU: Multi-core processor (4+ cores for precompute generation)
+- RAM: 16GB minimum (32GB recommended for parallel training)
+- CPU: Multi-core processor (8+ cores for precompute generation)
 - GPU: Optional (CUDA-capable for faster training)
 - Storage: ~5GB (3GB for precompute tables, 2GB for models/logs)
 
 ### Setup Steps
 
-**Option A: Automated Setup (Recommended)**
+**Step 1: Clone Both Repositories**
 
 ```bash
-# 1. Clone the repository
+# Clone handover-rl and orbit-engine as sibling directories
+cd ~/projects  # or your preferred directory
+
+# Clone orbit-engine first (physics dependency)
+git clone https://github.com/yourusername/orbit-engine.git
+
+# Clone handover-rl
 git clone https://github.com/yourusername/handover-rl.git
+
+# Verify directory structure
+ls -la
+# Should show:
+#   orbit-engine/
+#   handover-rl/
+```
+
+**Step 2: Setup Environment**
+
+**Option A: Automated Setup (Recommended)**
+```bash
 cd handover-rl
-
-# 2. Ensure orbit-engine is installed in parallel directory
-ls ../orbit-engine  # Should exist
-
-# 3. Run automated setup script
 ./setup_env.sh
 ```
 
 The `setup_env.sh` script will:
-- Check Python version (3.10+ required, 3.12+ recommended)
+- Check Python version (3.10+ required)
 - Verify orbit-engine integration
 - Create virtual environment
 - Install all dependencies
 - Verify installation
 
 **Option B: Manual Setup**
-
 ```bash
-# 1. Clone the repository
-git clone https://github.com/yourusername/handover-rl.git
 cd handover-rl
 
-# 2. Ensure orbit-engine is installed in parallel directory
-ls ../orbit-engine  # Should exist
-
-# 3. Set up Python environment
+# Create virtual environment
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# 4. Install dependencies
+# Install dependencies
 pip install -r requirements.txt
 
-# 5. Install orbit-engine in editable mode
+# Install orbit-engine in editable mode (CRITICAL)
 pip install -e ../orbit-engine
 
-# 6. Verify installation
+# Verify installation
 python -c "import src.environments; print('✓ Installation successful')"
 ```
 
----
+**Step 3: Generate Precompute Table (Required)**
 
-## Quick Start
+The precompute table is NOT included in git (too large: 2.6GB). You must generate it:
 
-### Prerequisites: Generate Required Data Files
-
-Before training, you need to generate the precompute table and satellite IDs list.
-
-Generate the orbit precompute table. This is a **one-time operation** that pre-calculates all satellite positions and signal characteristics.
-
-**Option A: 30-day table (Recommended for full training)**
 ```bash
+# Activate virtual environment
+source venv/bin/activate
+
+# Generate 30-day precompute table (~3 hours)
 python scripts/generate_orbit_precompute.py \
   --start-time "2025-10-26 00:00:00" \
   --end-time "2025-11-25 23:59:59" \
-  --output data/orbit_precompute_30days_optimized.h5 \
+  --output data/orbit_precompute_30days.h5 \
   --config configs/config.yaml \
-  --processes 16
-```
+  --processes 16 \
+  --yes
 
-**Option B: 7-day table (Quick testing, ~7 minutes)**
-```bash
-python scripts/generate_orbit_precompute.py \
-  --start-time "2025-10-26 00:00:00" \
-  --end-time "2025-11-02 00:00:00" \
-  --output data/orbit_precompute_7days.h5 \
-  --config configs/config.yaml \
-  --processes 8
-```
-
-**Performance:**
-- 30-day table: ~30 minutes, 125 satellites, 2.5GB, 518,400 timesteps
-- 7-day table: ~7 minutes, 125 satellites, 600MB, 120,960 timesteps
-
-**Step 2: Extract Satellite IDs**
-
-After generating the precompute table, extract the list of satellite IDs:
-
-```bash
+# Extract satellite IDs
 python -c "
 import h5py
-with h5py.File('data/orbit_precompute_30days_optimized.h5', 'r') as f:
-    sat_ids = sorted(list(f.keys()))
+with h5py.File('data/orbit_precompute_30days.h5', 'r') as f:
+    sat_ids = sorted(list(f['states'].keys()))
 with open('data/satellite_ids_from_precompute.txt', 'w') as f:
     for sat_id in sat_ids:
         f.write(f'{sat_id}\n')
@@ -227,13 +213,24 @@ print(f'✓ Extracted {len(sat_ids)} satellite IDs')
 "
 ```
 
-This creates `data/satellite_ids_from_precompute.txt` which is required for training.
+**Verification:**
+```bash
+ls -lh data/
+# Should show:
+#   orbit_precompute_30days.h5 (2.6GB)
+#   satellite_ids_from_precompute.txt
+```
 
 ---
 
-### Training Workflow
+## Quick Start
 
-Now you're ready to train! Follow these steps:
+After completing the [Installation](#installation) steps (including precompute table generation), you're ready to train!
+
+```bash
+# Activate virtual environment first
+source venv/bin/activate
+```
 
 **Step 1: Quick Test Training (100 episodes, ~5 minutes)**
 
@@ -477,7 +474,7 @@ agent:
 ```yaml
 precompute:
   enabled: true
-  table_path: "data/orbit_precompute_30days_optimized.h5"
+  table_path: "data/orbit_precompute_30days.h5"
   # If false, falls back to real-time calculations (very slow)
 ```
 
@@ -731,7 +728,28 @@ python tests/test_dwell_time.py
 Solution: Verify precompute mode is enabled in configs/config.yaml:
   precompute:
     enabled: true
-    table_path: "data/orbit_precompute_30days_optimized.h5"
+    table_path: "data/orbit_precompute_30days.h5"
+```
+
+**Issue: FPS degrades over time (starts at 80, drops to <10)**
+```
+Symptoms: Training slows down after several hundred episodes
+Cause: I/O contention from frequent checkpoint saves and TensorBoard logging
+Solution: Use optimized training flags:
+  python train_sb3.py \
+    --config configs/config.yaml \
+    --save-freq 500 \           # Save every 500 eps (default: 100)
+    --disable-tensorboard \      # Disable TensorBoard logging
+    --num-episodes 2500
+
+For multi-seed training, use the optimized script:
+  ./run_academic_training.sh   # Includes 30s staggered starts
+```
+
+**Issue: Multiple training processes compete for disk I/O**
+```
+Solution: Stagger process starts by 30 seconds (built into run_academic_training.sh)
+Monitor with: ./monitor_system_resources.sh
 ```
 
 **Issue: NaN rewards during training**
@@ -797,4 +815,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Last Updated**: 2025-12-03 | **Version**: 4.0 (Clean)
+**Last Updated**: 2025-12-11 | **Version**: 4.1 (Production Ready)
