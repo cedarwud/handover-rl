@@ -44,10 +44,28 @@ ENV/
 output/
 !output/.gitkeep
 
-# Large data files
-data/
-!data/.gitkeep
-!data/README.md
+# ==========================================
+# Data Files (Selective Tracking Strategy)
+# ==========================================
+# Strategy: Only ignore large files explicitly, allow small files by default
+
+# Ignore large precompute tables (2.6GB)
+data/orbit_precompute/*.h5
+
+# Ignore large orbit-engine outputs if copied locally
+data/orbit_engine_outputs/
+
+# But track directory structure and documentation
+!data/
+!data/**/.gitkeep
+!data/**/README.md
+
+# Track satellite pool snapshots (for reproducibility, ~30KB each)
+!data/satellite_pool/
+!data/satellite_pool/snapshot_*.json
+!data/satellite_pool/snapshot_*.metadata.json
+
+# Legacy: track old satellite IDs file (deprecated, kept for compatibility)
 !data/satellite_ids_from_precompute.txt
 
 # Logs

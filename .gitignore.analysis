@@ -1,0 +1,278 @@
+# .gitignore 分析報告（簡化架構版）
+
+## 當前設定檢查
+
+### ✅ 正確的設定（保持）
+
+1. **大型數據文件正確忽略**：
+   - `data/` - 忽略整個 data 目錄（正確）
+   - 預計算表（*.h5）會被忽略 ✅
+   - 訓練輸出（output/）會被忽略 ✅
+   - 日誌（logs/, *.log）會被忽略 ✅
+
+2. **Python 環境正確忽略**：
+   - `venv/`, `__pycache__/`, `*.pyc` ✅
+
+3. **IDE 文件正確忽略**：
+   - `.vscode/`, `.idea/` ✅
+
+### ❌ 需要修正的設定
+
+#### 問題 1：缺少衛星池快照追蹤
+
+**當前狀態**：
+```gitignore
+data/                              # 忽略整個 data/
+!data/.gitkeep                     # 追蹤 .gitkeep
+!data/README.md                    # 追蹤 README.md
+!data/satellite_ids_from_precompute.txt  # 追蹤（舊文件）
+```
+
+**問題**：
+- `data/satellite_pool/snapshot_*.json` 被 `data/` 規則忽略 ❌
+- `data/satellite_pool/snapshot_*.metadata.json` 被忽略 ❌
+- `data/satellite_pool/.gitkeep` 被忽略 ❌
+- `data/orbit_precompute/.gitkeep` 被忽略 ❌
+
+**需要添加**：
+```gitignore
+# 追蹤衛星池快照（論文可重現性）
+!data/satellite_pool/
+!data/satellite_pool/.gitkeep
+!data/satellite_pool/snapshot_*.json
+!data/satellite_pool/snapshot_*.metadata.json
+
+# 追蹤預計算目錄結構（但不追蹤 .h5 文件）
+!data/orbit_precompute/
+!data/orbit_precompute/.gitkeep
+```
+
+#### 問題 2：文檔文件未追蹤
+
+**當前狀態**：
+```bash
+$ git status --short
+?? DATA_ARCHITECTURE_CLARIFICATION.md
+?? SIMPLIFIED_ARCHITECTURE.md
+?? SOLUTION_PROPOSAL.md
+?? TLE_FRESHNESS_ANALYSIS.md
+```
+
+這些文檔應該被追蹤（設計文檔）。
+
+**原因分析**：
+- 沒有被 .gitignore 忽略
+- 只是還沒有 `git add`
+- 這是正確的（應該追蹤）✅
+
+#### 問題 3：過時的配置
+
+**當前設定**：
+```gitignore
+!data/satellite_ids_from_precompute.txt
+```
+
+**問題**：
+- 這個文件是舊的預計算系統遺留
+- 簡化架構中不再需要
+- 但保留也無害（只有 1KB）
+
+**建議**：
+- 可以保留（向後兼容）
+- 或註釋說明已廢棄
+
+---
+
+## 修正建議
+
+### 方案 A：最小修改（推薦）
+
+只添加快照追蹤支持：
+
+```gitignore
+# Large data files
+data/
+!data/.gitkeep
+!data/README.md
+!data/satellite_ids_from_precompute.txt
+
+# NEW: Track satellite pool snapshots (for reproducibility)
+!data/satellite_pool/
+!data/satellite_pool/.gitkeep
+!data/satellite_pool/snapshot_*.json
+!data/satellite_pool/snapshot_*.metadata.json
+!data/satellite_pool/README.md
+
+# NEW: Track orbit precompute directory structure (but not .h5 files)
+!data/orbit_precompute/
+!data/orbit_precompute/.gitkeep
+!data/orbit_precompute/README.md
+data/orbit_precompute/*.h5
+```
+
+### 方案 B：重構整理（更清晰）
+
+重新組織 data/ 相關規則：
+
+```gitignore
+# ==========================================
+# Data Files (Selective Tracking)
+# ==========================================
+# Ignore all data files by default
+data/
+
+# Track directory structure
+!data/.gitkeep
+!data/README.md
+
+# Track satellite pool snapshots (論文可重現性)
+!data/satellite_pool/
+!data/satellite_pool/.gitkeep
+!data/satellite_pool/README.md
+!data/satellite_pool/snapshot_*.json
+!data/satellite_pool/snapshot_*.metadata.json
+
+# Track orbit precompute directory structure (but ignore large .h5 files)
+!data/orbit_precompute/
+!data/orbit_precompute/.gitkeep
+!data/orbit_precompute/README.md
+data/orbit_precompute/*.h5  # Explicitly ignore precompute tables (2.6GB)
+
+# Legacy: satellite IDs from old precompute system (deprecated, kept for compatibility)
+!data/satellite_ids_from_precompute.txt
+```
+
+---
+
+## 應該追蹤的文件清單（簡化架構）
+
+### 必須追蹤（核心功能）
+
+```
+✅ src/**/*.py                           # 源代碼
+✅ configs/*.yaml                        # 配置文件
+✅ train_sb3.py                          # 訓練腳本
+✅ setup_env.sh                          # 環境設置
+✅ requirements.txt                      # 依賴列表
+✅ README.md                             # 主文檔
+✅ .gitignore                            # Git 配置
+```
+
+### 新增追蹤（簡化架構）
+
+```
+✅ data/satellite_pool/snapshot_*.json           # 衛星池快照（~30KB）
+✅ data/satellite_pool/snapshot_*.metadata.json  # 快照元數據（~1KB）
+✅ data/satellite_pool/.gitkeep                  # 目錄結構
+✅ data/satellite_pool/README.md                 # 說明文檔
+✅ data/orbit_precompute/.gitkeep                # 目錄結構
+✅ data/orbit_precompute/README.md               # 說明文檔
+```
+
+### 設計文檔（可選，但推薦）
+
+```
+✅ SIMPLIFIED_ARCHITECTURE.md            # 架構設計文檔
+✅ TLE_FRESHNESS_ANALYSIS.md             # TLE 新鮮度分析
+✅ DATA_ARCHITECTURE_CLARIFICATION.md    # 數據架構說明
+⚠️  SOLUTION_PROPOSAL.md                 # 舊方案（可移除或歸檔）
+```
+
+### 絕對不追蹤（大文件）
+
+```
+❌ data/orbit_precompute/*.h5            # 預計算表（2.6GB）
+❌ output/**/*                           # 訓練輸出
+❌ logs/**/*                             # 日誌文件
+❌ venv/                                 # 虛擬環境
+❌ __pycache__/                          # Python 緩存
+```
+
+---
+
+## 測試建議
+
+創建測試腳本驗證 .gitignore 是否正確：
+
+```bash
+#!/bin/bash
+# test_gitignore.sh
+
+echo "Testing .gitignore configuration..."
+
+# Test 1: 快照文件應該被追蹤
+mkdir -p data/satellite_pool
+touch data/satellite_pool/snapshot_v1.0.json
+git status --short | grep "snapshot_v1.0.json" && echo "✅ Snapshot tracking: PASS" || echo "❌ Snapshot tracking: FAIL"
+
+# Test 2: 預計算表應該被忽略
+mkdir -p data/orbit_precompute
+touch data/orbit_precompute/test.h5
+git status --short | grep "test.h5" && echo "❌ Precompute ignore: FAIL" || echo "✅ Precompute ignore: PASS"
+
+# Test 3: .gitkeep 應該被追蹤
+touch data/orbit_precompute/.gitkeep
+git status --short | grep ".gitkeep" && echo "✅ .gitkeep tracking: PASS" || echo "❌ .gitkeep tracking: FAIL"
+
+# Cleanup
+rm -f data/satellite_pool/snapshot_v1.0.json
+rm -f data/orbit_precompute/test.h5
+rm -f data/orbit_precompute/.gitkeep
+```
+
+---
+
+## 文件大小估算（Git 追蹤內容）
+
+假設完整追蹤所有應追蹤的文件：
+
+```
+源代碼（src/）:              ~100 KB
+配置文件:                    ~10 KB
+訓練腳本:                    ~50 KB
+文檔（README, etc.）:         ~200 KB
+快照文件（10個版本）:         ~300 KB (10 × 30KB)
+設計文檔:                    ~100 KB
+
+總計（Git repo 大小）:        ~760 KB
+```
+
+**結論**：非常輕量，遠低於 GitHub 建議（50MB）✅
+
+---
+
+## 潛在問題警告
+
+### 問題：Git 忽略規則優先級
+
+```gitignore
+data/                    # Rule 1: 忽略 data/
+!data/satellite_pool/    # Rule 2: 但追蹤 satellite_pool/
+```
+
+**Git 行為**：
+- 如果父目錄被忽略，子目錄的否定規則（!）可能不生效
+- 需要逐級否定
+
+**正確寫法**：
+```gitignore
+data/                          # 忽略 data/
+!data/                         # 但追蹤 data/ 目錄本身（必須）
+data/*                         # 忽略 data/ 下所有文件
+!data/.gitkeep                 # 追蹤 .gitkeep
+!data/README.md                # 追蹤 README.md
+!data/satellite_pool/          # 追蹤 satellite_pool/ 目錄
+data/satellite_pool/*          # 忽略其下所有文件
+!data/satellite_pool/.gitkeep  # 但追蹤 .gitkeep
+!data/satellite_pool/snapshot_*.json  # 追蹤快照
+```
+
+**或使用更簡單的方式**（推薦）：
+```gitignore
+# 只忽略大文件，明確列出
+data/orbit_precompute/*.h5     # 只忽略預計算表
+output/                        # 忽略輸出
+logs/                          # 忽略日誌
+```
+
+這樣 data/ 下的小文件（快照）會自動被追蹤。
