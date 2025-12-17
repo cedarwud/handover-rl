@@ -122,13 +122,15 @@ handover-rl/
 **Software Requirements:**
 - Python 3.10 or higher (3.12 recommended)
 - [orbit-engine](../orbit-engine) - Physics simulation engine (sibling directory)
+  - ⚠️ **REQUIRED**: Must run orbit-engine Stage 4 to generate satellite pool data
+  - Generates: `link_feasibility_output_*.json` (~29MB, contains 101 Starlink satellites)
 - Git, GCC/Clang compiler
 
 **Hardware Requirements:**
 - RAM: 16GB minimum (32GB recommended for parallel training)
 - CPU: Multi-core processor (8+ cores for precompute generation)
 - GPU: Optional (CUDA-capable for faster training)
-- Storage: ~5GB (3GB for precompute tables, 2GB for models/logs)
+- Storage: ~5GB (3GB for precompute tables, 2GB for models/logs, 30MB for orbit-engine data)
 
 ### Setup Steps
 
@@ -151,11 +153,39 @@ ls -la
 #   handover-rl/
 ```
 
-**Step 2: Setup Environment**
+**Step 2: Setup orbit-engine (REQUIRED - Generates Satellite Pool)**
+
+⚠️ **CRITICAL:** handover-rl requires orbit-engine's Stage 4 output to load the scientifically selected satellite pool (101 Starlink satellites).
+
+```bash
+cd orbit-engine
+
+# Setup orbit-engine environment
+./setup.sh
+
+# Run orbit-engine processing (Stages 1-4 required, ~10-15 minutes)
+source venv/bin/activate
+./run.sh --stage 4
+
+# Verify Stage 4 output exists
+ls -lh data/outputs/stage4/link_feasibility_output_*.json
+# Should show a ~29MB JSON file
+```
+
+**What this generates:**
+- **Stage 1**: Load TLE data for 9000+ satellites
+- **Stage 2**: Propagate orbits for visible satellites
+- **Stage 3**: Transform coordinates (ECI → ECEF → geodetic)
+- **Stage 4**: Link feasibility analysis ← **REQUIRED FOR HANDOVER-RL**
+  - Output: `link_feasibility_output_*.json` (~29MB)
+  - Contains: 101 Starlink satellites scientifically selected for handover training
+  - Used by: `src/utils/satellite_utils.py:load_stage4_optimized_satellites()`
+
+**Step 3: Setup handover-rl Environment**
 
 **Option A: Automated Setup (Recommended)**
 ```bash
-cd handover-rl
+cd ../handover-rl
 ./setup_env.sh
 ```
 
@@ -168,7 +198,7 @@ The `setup_env.sh` script will:
 
 **Option B: Manual Setup**
 ```bash
-cd handover-rl
+cd ../handover-rl
 
 # Create virtual environment
 python3 -m venv venv
@@ -184,7 +214,7 @@ pip install -e ../orbit-engine
 python -c "import src.environments; print('✓ Installation successful')"
 ```
 
-**Step 3: Generate Precompute Table (Required)**
+**Step 4: Generate Precompute Table (Required)**
 
 The precompute table is NOT included in git (too large: 2.6GB). You must generate it:
 
@@ -215,17 +245,32 @@ print(f'✓ Extracted {len(sat_ids)} satellite IDs')
 
 **Verification:**
 ```bash
+# Check handover-rl data files
 ls -lh data/
 # Should show:
 #   orbit_precompute_30days.h5 (2.6GB)
-#   satellite_ids_from_precompute.txt
+#   satellite_ids_from_precompute.txt (102 satellite IDs)
+
+# Check orbit-engine Stage 4 output (REQUIRED)
+ls -lh ../orbit-engine/data/outputs/stage4/
+# Should show:
+#   link_feasibility_output_*.json (~29MB)
 ```
 
 ---
 
 ## Quick Start
 
-After completing the [Installation](#installation) steps (including precompute table generation), you're ready to train!
+After completing the [Installation](#installation) steps (including orbit-engine Stage 4 processing and precompute table generation), you're ready to train!
+
+**Prerequisites Check:**
+```bash
+# Verify orbit-engine Stage 4 output exists
+ls ../orbit-engine/data/outputs/stage4/link_feasibility_output_*.json
+
+# Verify handover-rl precompute table exists
+ls data/orbit_precompute_30days.h5
+```
 
 ```bash
 # Activate virtual environment first
@@ -723,6 +768,25 @@ python tests/test_dwell_time.py
 
 ### Common Issues
 
+**Issue: FileNotFoundError: No Stage 4 output found**
+```
+Error: FileNotFoundError when loading satellite pool
+Symptoms:
+  - "No Stage 4 output found" during environment initialization
+  - "link_feasibility_output_*.json not found"
+
+Cause: orbit-engine Stage 4 has not been run yet
+
+Solution: Run orbit-engine to generate satellite pool data:
+  cd ../orbit-engine
+  source venv/bin/activate
+  ./run.sh --stage 4
+
+  # Verify output exists
+  ls -lh data/outputs/stage4/link_feasibility_output_*.json
+  # Should show ~29MB JSON file
+```
+
 **Issue: Training is very slow**
 ```
 Solution: Verify precompute mode is enabled in configs/config.yaml:
@@ -815,4 +879,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Last Updated**: 2025-12-11 | **Version**: 4.1 (Production Ready)
+**Last Updated**: 2025-12-11 | **Version**: 4.2 (Production Ready - orbit-engine dependency documented)
