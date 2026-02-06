@@ -73,11 +73,16 @@ agent:
 # Precompute Configuration
 # ============================================================================
 precompute:
-  enabled: false  # Disabled - precompute table format incompatible
-  table_path: "data/orbit_precompute_existing.h5"
+  enabled: true  # Enabled - using 14-day precompute table (2025-12-17)
+  table_path: "data/orbit_precompute/orbit_precompute_14days.h5"
 
-  # If precompute is disabled or table not found, falls back to real-time calculations
-  # Real-time mode is VERY slow but works without precomputed data
+  # 14-day table generated 2025-12-17:
+  # - Time range: 2025-12-17 to 2025-12-31
+  # - Satellites: 102 Starlink
+  # - Timesteps: 241,921
+  # - File size: 1179 MB
+  # - TLE precision: <15km (within ±14 day validation window)
+  # - Training speedup: ~42x vs real-time mode
 
 # ============================================================================
 # Physics Configuration (for real-time calculations)

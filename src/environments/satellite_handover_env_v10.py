@@ -1,48 +1,50 @@
 #!/usr/bin/env python3
 """
-Multi-Satellite Handover Environment
+Multi-Satellite Handover Environment - V10 (Connectivity-Centric Reward)
 
-RVT-Based Reward Function (Academic Standard)
-=================================================
-Reference: "User-Centric Satellite Handover for Multiple Traffic Profiles
-Using Deep Q-Learning" (IEEE TAES 2024, Equation 14)
+Aligned Reward Function (Based on Comprehensive Evaluation 2025-12-19)
+=======================================================================
 
-Previous Issue (V2-V8): QoS-based rewards led to extreme stay behavior (99.4% stay).
-With 10-minute episodes, RSRP doesn't change much, so agent learns "never switch".
+CRITICAL CHANGE FROM V9: V9 RVT-based reward created reward-performance inversion
+- Simple baselines (Random, Always Stay): High reward (+68%), Poor connectivity (89%)
+- DQN: Low reward (-40%), Excellent connectivity (98.3%)
+- Root cause: RVT rewards incentivized frequent switching, not connectivity
 
-Solution: RVT-Based Reward (Paper Equation 14)
-- Handover to loaded satellite: -500 (z1)
-- Handover to free satellite: -300 (z2)
-- Stay on loaded satellite: -100 * load_factor (f1)
-- Stay on free satellite: +RVT (f2, Remaining Visibility Time in seconds)
+V10 Solution: Connectivity-Centric Reward (Aligned with Operational Objectives)
+================================================================================
 
-Key Innovation: RVT (Remaining Visibility Time)
-- Predicts when satellite will drop below min_elevation
-- Encourages switching before satellite loss
-- Natural incentive for proactive handovers
-- Paper result: 4.2 handovers/episode, 0.033% blocking
+PRIMARY OBJECTIVE: CONNECTIVITY (+100/-500)
+- Connected: +100 per timestep (establishes baseline scale)
+- Disconnected: -500 (critical failure, 5× normal timestep)
+- Scale: Ensures connectivity dominates all other components
 
-Expected Results (from paper):
-- Handovers: ~4.2 per episode (600s, 120 steps)
-- Blocking rate: ~0.033%
-- Balanced stay/switch behavior
-- Training: 2500 episodes
+SECONDARY OBJECTIVE: HANDOVER EFFICIENCY (-50/-75)
+- Handover cost: -50 (realistic signaling overhead, 0.5× connectivity)
+- Ping-pong penalty: -25 additional (unnecessary back-and-forth)
+- Scale: Meaningful penalty but allows beneficial handovers
 
-Episode Initialization (Updated 2025-12-17):
+TERTIARY OBJECTIVE: SIGNAL QUALITY (+1.0/-20)
+- RSRP quality: +1.0 normalized (1% of connectivity value)
+- Poor signal penalty: -20 (meaningful but less than handover)
+- Scale: Secondary consideration when connected
+
+QUATERNARY OBJECTIVE: STABILITY (+0.5)
+- Dwell time bonus: +0.5 per 100 timesteps (0.005 per timestep)
+- Encourages handover restraint without prohibiting switches
+- Scale: Gradual reward for stability
+
+Expected Results (Based on V9 DQN Operational Performance):
+- Handovers: ~0.79 per episode (optimal balance, not 4.2 like V9 paper)
+- Connectivity: ~98.3% (highest among all policies)
+- Zero-handover episodes: ~46% (learned restraint)
+- Reward: ~10,900 per episode (aligned with performance!)
+
+Episode Initialization (Unchanged from V9):
 - Random start time: 2025-12-17 00:00:00 + random[0, 14 days]
-- Ensures training diversity across different satellite configurations
 - 14 days = 224 orbital periods = sufficient geometric diversity
-- Time range matches precompute table for 273x speedup
-- Smart resampling: automatically skips times with insufficient satellite coverage
+- Smart resampling: skips times with insufficient satellite coverage
 
-TLE Precision Rationale:
-- 14 days within ±14 day TLE validation window = <15km position error
-- Position error impact on handover decisions: negligible (<0.3° elevation error)
-- All data points validated (no NaN values)
-
-Academic Standard: Real TLE data, Complete physics, RVT-based rewards
-
-Last updated: 2025-12-17 - Changed to 14-day range for optimal precision-diversity tradeoff
+Last updated: 2025-12-19 - V10 reward redesign based on comprehensive evaluation
 """
 
 import gymnasium as gym
@@ -183,14 +185,12 @@ class SatelliteHandoverEnv(gym.Env):
             'total_reward': 0.0,  # V9: Track cumulative reward
         }
 
-        logger.info(f"SatelliteHandoverEnv initialized (RVT-based reward)")
+        logger.info(f"SatelliteHandoverEnv V10 initialized (Connectivity-Centric Reward)")
         logger.info(f"  Satellite pool: {len(self.satellite_ids)} satellites")
         logger.info(f"  Max candidates per episode: {self.max_visible_satellites}")
         logger.info(f"  Min elevation: {self.min_elevation_deg}°")
-        logger.info(f"  V9 Reward: handover_to_loaded={self.reward_weights['handover_to_loaded']}, "
-                   f"handover_to_free={self.reward_weights['handover_to_free']}, "
-                   f"rvt_weight={self.reward_weights['rvt_reward_weight']}")
-        logger.info(f"  V9+ Dwell Time Constraint: {self.min_dwell_time_seconds}s "
+        logger.info(f"  V10 Reward: connectivity=±100/-500, handover=-50/-75, signal_quality=+1.0/-20, stability=+0.5")
+        logger.info(f"  Dwell Time Constraint: {self.min_dwell_time_seconds}s "
                    f"({self.min_dwell_time_steps} steps) - Physical/Protocol constraint")
 
     def reset(self, seed=None, options=None):
@@ -663,65 +663,121 @@ class SatelliteHandoverEnv(gym.Env):
 
     def _calculate_reward(self, handover_occurred: bool, prev_sat: str) -> float:
         """
-        V9: RVT-based reward function (IEEE TAES 2024 Equation 14)
+        V10: Connectivity-Centric Reward (Aligned with Operational Objectives)
 
-        Reward structure:
-        - If handover to loaded satellite: -500 (z1)
-        - If handover to free satellite: -300 (z2)
-        - If stay on loaded satellite: -100 * load_factor (f1)
-        - If stay on free satellite: +RVT (f2)
+        Design Philosophy:
+        1. Connectivity is paramount (+100 connected, -500 disconnected)
+        2. Handover costs are realistic (-50, not -300)
+        3. Signal quality matters when connected (+1.0 RSRP)
+        4. Stability is rewarded (+0.5 per dwell time unit)
+        5. QoS penalties are meaningful (-20 for poor signal)
 
-        Additional components:
-        - Small QoS bonus (minimal, not primary)
-        - Ping-pong penalty
+        Expected Behavior:
+        - High reward for maintaining stable, high-quality connections
+        - Moderate penalty for necessary handovers
+        - Strong penalty for service interruption
+        - Encourages handover restraint while not prohibiting beneficial switches
         """
-        reward = 0.0
 
-        # No connection - heavy penalty
+        # ========================================
+        # PRIMARY COMPONENT: CONNECTIVITY (+100/-500)
+        # ========================================
+        # Connectivity is the most important objective
+        # Scale: ±100 per timestep ensures this dominates other components
+
         if self.current_satellite is None:
-            return -10.0
+            # DISCONNECTION - Critical failure
+            # Scale: -500 (equivalent to 5 timesteps of lost connectivity)
+            connectivity_reward = -500.0
+            logger.warning("Disconnection occurred - critical penalty")
+        else:
+            # CONNECTED - Primary success criterion
+            # Scale: +100 (establishes baseline for all other components)
+            connectivity_reward = 100.0
 
-        # Get current satellite load and RVT
-        is_loaded = self._is_satellite_loaded(self.current_satellite)
-        rvt_seconds = self._calculate_rvt(self.current_satellite)
+        # ========================================
+        # SECONDARY COMPONENT: HANDOVER COST (-50)
+        # ========================================
+        # Realistic cost based on signaling overhead and service interruption
+        # Industry estimate: 100-200ms signaling + 50-100ms interruption
+        # Scale: -50 (half a timestep of connectivity value)
 
-        if handover_occurred:
-            # HANDOVER REWARD (from paper)
-            if is_loaded:
-                # z1: Handover to loaded/overloaded satellite
-                reward += self.reward_weights['handover_to_loaded']  # -500
-            else:
-                # z2: Handover to available satellite
-                reward += self.reward_weights['handover_to_free']  # -300
+        handover_penalty = 0.0
+        if handover_occurred and self.current_satellite is not None:
+            # Realistic handover cost
+            handover_penalty = -50.0
 
-            # Check for ping-pong pattern
+            # Additional ping-pong penalty (unnecessary back-and-forth)
             if len(self.handover_history) >= 3:
                 recent = self.handover_history[-3:]
-                if len(set(recent)) < len(recent):
-                    reward += self.reward_weights['ping_pong_penalty']  # -50
+                if len(set(recent)) < len(recent):  # Repeated satellites
+                    handover_penalty -= 25.0  # Extra penalty for ping-pong
                     self.episode_stats['num_ping_pongs'] += 1
+                    logger.debug("Ping-pong detected - additional penalty")
 
-        else:
-            # STAY REWARD (from paper)
-            if is_loaded:
-                # f1: Stay on loaded satellite (negative reward)
-                load_factor = self._get_satellite_load(self.current_satellite)
-                reward -= self.reward_weights['stay_loaded_factor'] * load_factor  # -100 * load
-            else:
-                # f2: Stay on free satellite (RVT reward)
-                reward += self.reward_weights['rvt_reward_weight'] * rvt_seconds  # +RVT
+        # ========================================
+        # TERTIARY COMPONENT: SIGNAL QUALITY (+1.0 RSRP)
+        # ========================================
+        # RSRP quality matters, but only when connected
+        # Scale: +1.0 (1% of connectivity value, maintains proportion)
 
-        # Add small QoS component (minimal, not primary)
-        if self.current_satellite in self.episode_candidate_ids:
-            idx = self.episode_candidate_ids.index(self.current_satellite)
-            state = self.episode_candidate_states[idx]
+        signal_quality_reward = 0.0
+        if self.current_satellite is not None:
+            if self.current_satellite in self.episode_candidate_ids:
+                idx = self.episode_candidate_ids.index(self.current_satellite)
+                state = self.episode_candidate_states[idx]
 
-            if state:
-                rsrp = state.get('rsrp_dbm', -140)
-                rsrp_normalized = np.clip((rsrp + 110) / 50, 0, 1)
-                reward += rsrp_normalized * self.reward_weights['qos']  # Small QoS bonus
+                if state:
+                    rsrp = state.get('rsrp_dbm', -140)
 
-        return float(reward)
+                    # Normalize RSRP: -120 dBm (poor) to -70 dBm (excellent)
+                    # Scale: 0 (poor) to 1.0 (excellent)
+                    rsrp_normalized = np.clip((rsrp + 120) / 50.0, 0.0, 1.0)
+                    signal_quality_reward = rsrp_normalized * 1.0
+
+                    # QoS penalty for very poor signal
+                    if rsrp < -120:
+                        # Poor signal quality penalty
+                        # Scale: -20 (significant but less than handover cost)
+                        signal_quality_reward -= 20.0
+
+        # ========================================
+        # QUATERNARY COMPONENT: STABILITY BONUS (+0.5)
+        # ========================================
+        # Reward staying on same satellite (handover restraint)
+        # Scale: +0.5 per 100 timesteps = +0.005 per timestep
+        # Encourages stability without dominating other factors
+
+        stability_bonus = 0.0
+        if self.current_satellite is not None and not handover_occurred:
+            # Reward for maintaining connection
+            # Grows with time since last handover (up to reasonable limit)
+            dwell_time_normalized = min(self.steps_since_last_handover / 100.0, 2.0)
+            stability_bonus = 0.5 * dwell_time_normalized
+
+        # ========================================
+        # TOTAL REWARD
+        # ========================================
+
+        total_reward = (
+            connectivity_reward +      # ±500 (primary)
+            handover_penalty +         # -50 to -75 (secondary)
+            signal_quality_reward +    # 0 to +1.0 (tertiary)
+            stability_bonus            # 0 to +1.0 (quaternary)
+        )
+
+        # Logging for debugging (verbose mode)
+        if self.config.get('environment', {}).get('verbose_rewards', False):
+            logger.debug(
+                f"Reward breakdown: "
+                f"connectivity={connectivity_reward:+.1f}, "
+                f"handover={handover_penalty:+.1f}, "
+                f"signal_quality={signal_quality_reward:+.1f}, "
+                f"stability={stability_bonus:+.1f}, "
+                f"total={total_reward:+.1f}"
+            )
+
+        return float(total_reward)
 
     def _check_done(self) -> Tuple[bool, bool]:
         """Check if episode is done"""

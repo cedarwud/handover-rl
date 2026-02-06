@@ -33,9 +33,12 @@ Note:
     - Older versions (V1, V2, V6) have been archived
 """
 
-# RVT-based reward (RECOMMENDED - latest, academic standard)
+# V9: RVT-based reward (has reward misalignment issues)
 from .satellite_handover_env import SatelliteHandoverEnv
 
-__all__ = ['SatelliteHandoverEnv']
+# V10: Connectivity-centric reward (RECOMMENDED - aligned with operational objectives)
+from .satellite_handover_env_v10 import SatelliteHandoverEnv as SatelliteHandoverEnvV10
 
-__version__ = "1.0.0"  # RVT-based reward (IEEE TAES 2024)
+__all__ = ['SatelliteHandoverEnv', 'SatelliteHandoverEnvV10']
+
+__version__ = "1.1.0"  # Added V10 connectivity-centric reward (2025-12-19)

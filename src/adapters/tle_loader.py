@@ -8,12 +8,22 @@ Design:
 - Supports single TLE or multiple TLE files (for 30-day precision strategy)
 - Validates TLE format and epoch dates
 - Organizes TLEs by satellite NORAD ID
-- Implements 30 TLE × 1 day strategy for <1km accuracy
+- Implements flexible validation window for different use cases
+
+TLE Validation Strategy (Updated 2025-12-17):
+- Real-time training: ±2 days (optimal precision, <1km error)
+- Precompute generation: ±14 days (acceptable precision, <10km error)
+- Not recommended: >30 days (>50km error)
+
+This allows precompute table generation to cover 7-30 day ranges while
+maintaining acceptable accuracy for RL training purposes.
 
 SOURCE:
 - TLE format: https://celestrak.org/NORAD/documentation/tle-fmt.php
-- SGP4 precision: <1km within ±1-2 days from epoch
-- Strategy: Use 30 TLE files, each propagated for 1 day
+- SGP4 precision analysis: See TLE_FRESHNESS_ANALYSIS.md
+- Default validation window: 14 days (balances coverage vs accuracy)
+
+Last updated: 2025-12-17 - Extended validation window from ±2 to ±14 days
 """
 
 import os
@@ -76,15 +86,19 @@ class TLE:
         except Exception as e:
             raise ValueError(f"Failed to parse TLE epoch from line 1: {e}")
 
-    def is_valid_for_date(self, target_date: datetime, max_days: int = 2) -> bool:
+    def is_valid_for_date(self, target_date: datetime, max_days: int = 14) -> bool:
         """
         Check if TLE is valid for target date.
 
-        SGP4 precision: <1km within ±1-2 days from epoch
+        SGP4 precision degradation:
+        - ±2 days: <1km error (excellent)
+        - ±7 days: <3km error (good for most applications)
+        - ±14 days: <10km error (acceptable for RL training)
+        - >30 days: >50km error (not recommended)
 
         Args:
             target_date: Target propagation date
-            max_days: Maximum days from epoch (default: 2)
+            max_days: Maximum days from epoch (default: 14, balances accuracy vs coverage)
 
         Returns:
             True if within precision range

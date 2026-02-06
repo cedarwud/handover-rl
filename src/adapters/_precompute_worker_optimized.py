@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
 """
-Optimized worker function for parallel precompute generation.
+Worker function for parallel precompute generation.
 
-Key optimizations:
-1. Pre-loaded TLE data passed to workers (avoid repeated file I/O)
-2. Minimal adapter initialization per worker
-3. Reduced memory footprint
+Current implementation (2025-12-17):
+- Uses standard OrbitEngineAdapter (not lightweight version)
+- TLE data loaded per worker (not pre-loaded yet)
+- Full physics initialization per worker
+
+Future optimizations (TODO):
+1. Implement OrbitEngineAdapterLightweight with pre-loaded TLE data
+2. Reduce initialization overhead per worker
+3. Minimize memory footprint
+
+Note: Previous "optimized" implementation relied on OrbitEngineAdapterLightweight
+which does not exist yet. This version uses the standard adapter and is fully
+functional, though slower than the theoretical optimized version.
 
 Must be at module level to be picklable for multiprocessing.
+
+Last updated: 2025-12-17 - Fixed ModuleNotFoundError by using standard adapter
 """
 
 import numpy as np
@@ -54,12 +65,13 @@ def compute_satellite_states_optimized(args: Tuple[str, dict, List[datetime], di
     sat_id, config, timestamps_list, tle_data_dict = args
 
     # Import here to avoid circular imports
-    from adapters.orbit_engine_adapter_lightweight import OrbitEngineAdapterLightweight
+    from adapters import OrbitEngineAdapter
 
     try:
-        # Create lightweight adapter with pre-loaded TLE data
-        # This avoids re-loading 230 TLE files per worker
-        worker_adapter = OrbitEngineAdapterLightweight(config, tle_data_dict)
+        # Create adapter (TLE data will be loaded as needed)
+        # Note: Pre-loaded TLE optimization not yet implemented
+        # TODO: Create OrbitEngineAdapterLightweight for further optimization
+        worker_adapter = OrbitEngineAdapter(config)
 
         states_array = np.zeros((len(timestamps_list), len(STATE_FIELDS)), dtype=np.float32)
 
