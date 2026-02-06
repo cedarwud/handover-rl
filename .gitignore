@@ -49,8 +49,9 @@ output/
 # ==========================================
 # Strategy: Only ignore large files explicitly, allow small files by default
 
-# Ignore large precompute tables (2.6GB)
+# Ignore large precompute tables (衍生數據，應本地生成)
 data/orbit_precompute/*.h5
+data/*.h5
 
 # Ignore large orbit-engine outputs if copied locally
 data/orbit_engine_outputs/

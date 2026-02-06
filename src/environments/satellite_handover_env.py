@@ -52,6 +52,8 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 import logging
 
+from .reward_calculator import RVTRewardCalculator
+
 logger = logging.getLogger(__name__)
 
 
@@ -128,13 +130,11 @@ class SatelliteHandoverEnv(gym.Env):
             'stability_bonus': reward_config.get('stability_bonus', 0.0),  # Not used in V9
         }
 
-        # V9: RVT calculation parameters
-        self.rvt_lookahead_minutes = 60  # Look ahead 60 minutes to find horizon crossing
-        self.rvt_check_interval_seconds = 30  # Check every 30 seconds
-
-        # Satellite load tracking (simplified: based on recent handover rate)
-        self.satellite_load = {}  # sat_id -> load_factor (0.0 to 1.0)
-        self.load_threshold = 0.7  # Above this is considered "loaded"
+        # Reward calculator (extracted module)
+        self.reward_calculator = RVTRewardCalculator(
+            reward_weights=self.reward_weights,
+            load_threshold=0.7,
+        )
 
         # Observation space: (K, 14) matrix (added RVT dimension)
         self.observation_space = spaces.Box(
@@ -153,10 +153,6 @@ class SatelliteHandoverEnv(gym.Env):
         self.episode_start = None
         self.previous_satellite = None
         self.handover_history = []
-
-        # V9: RVT cache
-        self.rvt_cache = {}  # sat_id -> (timestamp, rvt_seconds)
-        self.rvt_cache_duration = 60  # Cache valid for 60 seconds
 
         # V9+: Minimum Dwell Time Constraint (Physical/Protocol constraint)
         # Based on 3GPP NTN standards: Handover preparation ~15-20s minimum
@@ -233,9 +229,8 @@ class SatelliteHandoverEnv(gym.Env):
         self.previous_satellite = None
         self.handover_history = []
 
-        # V9: Reset RVT cache and load tracking
-        self.rvt_cache = {}
-        self.satellite_load = {}
+        # Reset reward calculator state
+        self.reward_calculator.reset()
 
         # V9+: Reset dwell time counter
         self.steps_since_last_handover = 0
@@ -545,7 +540,9 @@ class SatelliteHandoverEnv(gym.Env):
                 is_current = (sat_id == self.current_satellite)
 
                 # V9: Calculate RVT for this satellite
-                rvt_seconds = self._calculate_rvt(sat_id)
+                rvt_seconds = self.reward_calculator.calculate_rvt(
+                    sat_id, self.adapter, self.current_time, self.min_elevation_deg
+                )
 
                 observation[i] = self._state_dict_to_vector(
                     state,
@@ -585,143 +582,26 @@ class SatelliteHandoverEnv(gym.Env):
             rvt_seconds / 60.0,  # V9: RVT in minutes (normalized)
         ], dtype=np.float32)
 
-    def _calculate_rvt(self, sat_id: str) -> float:
-        """
-        Calculate Remaining Visibility Time (RVT) for a satellite.
-
-        Returns:
-            RVT in seconds (time until satellite drops below min_elevation)
-        """
-        # Check cache
-        if sat_id in self.rvt_cache:
-            cache_time, cached_rvt = self.rvt_cache[sat_id]
-            if (self.current_time - cache_time).total_seconds() < self.rvt_cache_duration:
-                return cached_rvt
-
-        # Calculate RVT by looking ahead
-        rvt_seconds = 0.0
-        check_time = self.current_time
-        max_lookahead = timedelta(minutes=self.rvt_lookahead_minutes)
-
-        try:
-            while (check_time - self.current_time) < max_lookahead:
-                check_time += timedelta(seconds=self.rvt_check_interval_seconds)
-
-                state_dict = self.adapter.calculate_state(
-                    satellite_id=sat_id,
-                    timestamp=check_time
-                )
-
-                if not state_dict:
-                    break
-
-                elevation = state_dict.get('elevation_deg', -90)
-
-                if elevation < self.min_elevation_deg:
-                    # Found horizon crossing
-                    rvt_seconds = (check_time - self.current_time).total_seconds()
-                    break
-            else:
-                # Satellite stays visible for entire lookahead period
-                rvt_seconds = max_lookahead.total_seconds()
-
-        except Exception as e:
-            logger.debug(f"Error calculating RVT for {sat_id}: {e}")
-            rvt_seconds = 0.0
-
-        # Cache result
-        self.rvt_cache[sat_id] = (self.current_time, rvt_seconds)
-
-        return rvt_seconds
-
-    def _get_satellite_load(self, sat_id: str) -> float:
-        """
-        Get load factor for a satellite (simplified model).
-
-        In a real system, this would query satellite capacity/user count.
-        Here we use a simplified model based on recent handover activity.
-
-        Returns:
-            Load factor 0.0 to 1.0
-        """
-        # Simplified: Random load with slight persistence
-        if sat_id not in self.satellite_load:
-            self.satellite_load[sat_id] = np.random.uniform(0.2, 0.8)
-
-        # Add some noise for variation
-        self.satellite_load[sat_id] = np.clip(
-            self.satellite_load[sat_id] + np.random.normal(0, 0.05),
-            0.0, 1.0
+    def _calculate_reward(self, handover_occurred: bool, prev_sat: str) -> float:
+        """V9: RVT-based reward (IEEE TAES 2024 Equation 14) - delegated to RVTRewardCalculator"""
+        reward = self.reward_calculator.calculate_reward(
+            handover_occurred=handover_occurred,
+            current_satellite=self.current_satellite,
+            handover_history=self.handover_history,
+            episode_candidate_ids=self.episode_candidate_ids,
+            episode_candidate_states=self.episode_candidate_states,
+            adapter=self.adapter,
+            current_time=self.current_time,
+            min_elevation_deg=self.min_elevation_deg,
         )
 
-        return self.satellite_load[sat_id]
+        # Track ping-pong in episode stats (side effect kept in env)
+        if handover_occurred and len(self.handover_history) >= 3:
+            recent = self.handover_history[-3:]
+            if len(set(recent)) < len(recent):
+                self.episode_stats['num_ping_pongs'] += 1
 
-    def _is_satellite_loaded(self, sat_id: str) -> bool:
-        """Check if satellite is considered loaded/overloaded"""
-        load = self._get_satellite_load(sat_id)
-        return load > self.load_threshold
-
-    def _calculate_reward(self, handover_occurred: bool, prev_sat: str) -> float:
-        """
-        V9: RVT-based reward function (IEEE TAES 2024 Equation 14)
-
-        Reward structure:
-        - If handover to loaded satellite: -500 (z1)
-        - If handover to free satellite: -300 (z2)
-        - If stay on loaded satellite: -100 * load_factor (f1)
-        - If stay on free satellite: +RVT (f2)
-
-        Additional components:
-        - Small QoS bonus (minimal, not primary)
-        - Ping-pong penalty
-        """
-        reward = 0.0
-
-        # No connection - heavy penalty
-        if self.current_satellite is None:
-            return -10.0
-
-        # Get current satellite load and RVT
-        is_loaded = self._is_satellite_loaded(self.current_satellite)
-        rvt_seconds = self._calculate_rvt(self.current_satellite)
-
-        if handover_occurred:
-            # HANDOVER REWARD (from paper)
-            if is_loaded:
-                # z1: Handover to loaded/overloaded satellite
-                reward += self.reward_weights['handover_to_loaded']  # -500
-            else:
-                # z2: Handover to available satellite
-                reward += self.reward_weights['handover_to_free']  # -300
-
-            # Check for ping-pong pattern
-            if len(self.handover_history) >= 3:
-                recent = self.handover_history[-3:]
-                if len(set(recent)) < len(recent):
-                    reward += self.reward_weights['ping_pong_penalty']  # -50
-                    self.episode_stats['num_ping_pongs'] += 1
-
-        else:
-            # STAY REWARD (from paper)
-            if is_loaded:
-                # f1: Stay on loaded satellite (negative reward)
-                load_factor = self._get_satellite_load(self.current_satellite)
-                reward -= self.reward_weights['stay_loaded_factor'] * load_factor  # -100 * load
-            else:
-                # f2: Stay on free satellite (RVT reward)
-                reward += self.reward_weights['rvt_reward_weight'] * rvt_seconds  # +RVT
-
-        # Add small QoS component (minimal, not primary)
-        if self.current_satellite in self.episode_candidate_ids:
-            idx = self.episode_candidate_ids.index(self.current_satellite)
-            state = self.episode_candidate_states[idx]
-
-            if state:
-                rsrp = state.get('rsrp_dbm', -140)
-                rsrp_normalized = np.clip((rsrp + 110) / 50, 0, 1)
-                reward += rsrp_normalized * self.reward_weights['qos']  # Small QoS bonus
-
-        return float(reward)
+        return reward
 
     def _check_done(self) -> Tuple[bool, bool]:
         """Check if episode is done"""
@@ -752,7 +632,10 @@ class SatelliteHandoverEnv(gym.Env):
                     self.episode_stats['avg_rsrp'] = old_avg + (rsrp - old_avg) / n
 
                     # V9: Update average RVT
-                    rvt = self._calculate_rvt(self.current_satellite)
+                    rvt = self.reward_calculator.calculate_rvt(
+                        self.current_satellite, self.adapter,
+                        self.current_time, self.min_elevation_deg
+                    )
                     old_avg_rvt = self.episode_stats['avg_rvt']
                     self.episode_stats['avg_rvt'] = old_avg_rvt + (rvt - old_avg_rvt) / n
 
